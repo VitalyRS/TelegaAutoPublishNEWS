@@ -29,6 +29,7 @@ Required credentials in `.env`:
 - `TARGET_CHANNEL_ID` - channel to publish to
 - `DEEPSEEK_API_KEY` - from platform.deepseek.com
 - `ADMIN_USER_ID` - Telegram user ID for admin commands
+- `ARTICLE_STYLE` - writing style (informative, ironic, cynical, playful, mocking) - default: informative
 
 ## Technology Stack
 
@@ -90,6 +91,7 @@ Edit `.env` to modify:
 - `PUBLISH_SCHEDULE=8,12,16,20` - Comma-separated hours (24h format)
 - `URGENT_KEYWORDS=молния,breaking` - Keywords for immediate publishing
 - `MAX_ARTICLES_PER_RUN=5` - Max articles to process per channel message
+- `ARTICLE_STYLE=informative` - Writing style (informative, ironic, cynical, playful, mocking)
 
 ## Database Schema
 
@@ -104,20 +106,42 @@ Edit `.env` to modify:
 Admin-only commands (require `ADMIN_USER_ID` match):
 - `/publish_now <id>` - Force immediate publication of queued article
 - `/clear_queue` - Remove all pending articles
+- `/set_style <style>` - Change article writing style (informative, ironic, cynical, playful, mocking)
 
 Public commands:
 - `/status` - Queue statistics and next publication time
 - `/queue` - List all pending articles
+- `/get_style` - Show current writing style
 
 ## DeepSeek Prompt Structure
 
 `deepseek_client.py` sends articles with system prompt defining output format:
 - Translate to Russian
-- News style formatting
-- Telegram Markdown (`**bold**`, `*italic*`, lists)
-- Paragraph structure with subheadings
+- News style formatting in selected style (informative, ironic, cynical, playful, mocking)
+- Telegram Markdown (`**bold**`, `*italic*`, lists) - NO # symbols for headers
+- Paragraph structure with subheadings (using **bold** instead of #)
+- Tags in Russian and Spanish at the end of article
+- NO author or publication date information
+
+Article structure:
+1. Title (in **bold**, not with #)
+2. Main text with subheadings
+3. Tags section with Russian and Spanish hashtags
+4. Source link (added automatically in telegram_handler.py)
 
 The processed text is stored in database and published with source link footer.
+
+## Writing Styles
+
+The bot supports multiple writing styles that can be changed dynamically:
+
+- **informative** (default): Neutral, factual news style with objective reporting
+- **ironic**: Subtle irony and hints throughout the article
+- **cynical**: Skeptical and critical perspective on events
+- **playful**: Light humor and playful phrasing
+- **mocking**: Satirical and biting sarcasm
+
+Change style using `/set_style <style>` command (admin only). The style applies to all new articles processed after the change. The DeepSeekClient maintains a single instance throughout the bot's lifetime, allowing dynamic style switching without restart.
 
 ## Implementation Details
 

@@ -2,8 +2,8 @@
 Клиент для работы с DeepSeek API
 """
 import logging
-import requests
 from typing import Optional, Dict
+from openai import OpenAI
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -14,11 +14,11 @@ class DeepSeekClient:
 
     def __init__(self):
         self.api_key = Config.DEEPSEEK_API_KEY
-        self.api_url = Config.DEEPSEEK_API_URL
-        self.headers = {
-            'Authorization': f'Bearer {self.api_key}',
-            'Content-Type': 'application/json'
-        }
+        # DeepSeek API совместим с OpenAI, используем базовый URL DeepSeek
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url="https://api.deepseek.com"
+        )
 
     def process_article(self, article_data: Dict[str, str]) -> Optional[str]:
         """
@@ -93,9 +93,9 @@ class DeepSeekClient:
             Текст ответа или None
         """
         try:
-            payload = {
-                'model': 'deepseek-chat',
-                'messages': [
+            response = self.client.chat.completions.create(
+                model='deepseek-chat',
+                messages=[
                     {
                         'role': 'system',
                         'content': 'Ты профессиональный редактор новостей. Твоя задача - обрабатывать и форматировать новостные статьи для публикации в Telegram.'
@@ -105,30 +105,17 @@ class DeepSeekClient:
                         'content': prompt
                     }
                 ],
-                'max_tokens': max_tokens,
-                'temperature': 0.7,
-                'stream': False
-            }
-
-            response = requests.post(
-                self.api_url,
-                headers=self.headers,
-                json=payload,
-                timeout=60
+                max_tokens=max_tokens,
+                temperature=0.7,
+                stream=False
             )
 
-            response.raise_for_status()
-            result = response.json()
-
-            if 'choices' in result and len(result['choices']) > 0:
-                return result['choices'][0]['message']['content']
+            if response.choices and len(response.choices) > 0:
+                return response.choices[0].message.content
             else:
-                logger.error(f"Неожиданный формат ответа от API: {result}")
+                logger.error(f"Неожиданный формат ответа от API: {response}")
                 return None
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка при запросе к DeepSeek API: {e}")
-            return None
         except Exception as e:
-            logger.error(f"Неожиданная ошибка при работе с DeepSeek API: {e}")
+            logger.error(f"Ошибка при работе с DeepSeek API: {e}")
             return None

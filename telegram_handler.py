@@ -3,11 +3,11 @@
 """
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 from typing import List, Optional
-from telegram import Update, Bot
-from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
-from telegram.constants import ParseMode
+import telebot
+from telebot import types
 from config import Config
 from database import NewsDatabase
 from scheduler import PublicationScheduler
@@ -22,8 +22,7 @@ class TelegramHandler:
         self.bot_token = Config.TELEGRAM_BOT_TOKEN
         self.source_channel = Config.SOURCE_CHANNEL_ID
         self.target_channel = Config.TARGET_CHANNEL_ID
-        self.bot = Bot(token=self.bot_token)
-        self.application = None
+        self.bot = telebot.TeleBot(self.bot_token, parse_mode='Markdown')
         self.db = NewsDatabase()
         self.scheduler = PublicationScheduler()
         self.urgent_keywords = Config.get_urgent_keywords()
@@ -31,48 +30,66 @@ class TelegramHandler:
         self.bot_start_time = datetime.now(timezone.utc)
         logger.info(f"Бот запущен. Будут обрабатываться только сообщения после {self.bot_start_time}")
 
-    async def setup(self):
-        """Инициализация приложения"""
-        self.application = Application.builder().token(self.bot_token).build()
+        # Настройка обработчиков
+        self._setup_handlers()
 
-        # Обработчик сообщений из канала
-        channel_handler = MessageHandler(
-            filters.ChatType.CHANNEL & filters.TEXT,
-            self.handle_channel_message
-        )
-        self.application.add_handler(channel_handler)
+    def _setup_handlers(self):
+        """Настройка обработчиков сообщений и команд"""
+
+        # Обработчик сообщений из каналов
+        @self.bot.channel_post_handler(content_types=['text'])
+        def handle_channel_post(message):
+            self._handle_channel_message(message)
 
         # Команды управления ботом
-        self.application.add_handler(CommandHandler("start", self.cmd_start))
-        self.application.add_handler(CommandHandler("status", self.cmd_status))
-        self.application.add_handler(CommandHandler("queue", self.cmd_queue))
-        self.application.add_handler(CommandHandler("publish_now", self.cmd_publish_now))
-        self.application.add_handler(CommandHandler("clear_queue", self.cmd_clear_queue))
-        self.application.add_handler(CommandHandler("help", self.cmd_help))
+        @self.bot.message_handler(commands=['start'])
+        def cmd_start(message):
+            self._cmd_start(message)
 
-        logger.info("Telegram обработчик настроен")
+        @self.bot.message_handler(commands=['help'])
+        def cmd_help(message):
+            self._cmd_help(message)
 
-    async def handle_channel_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        @self.bot.message_handler(commands=['status'])
+        def cmd_status(message):
+            self._cmd_status(message)
+
+        @self.bot.message_handler(commands=['queue'])
+        def cmd_queue(message):
+            self._cmd_queue(message)
+
+        @self.bot.message_handler(commands=['publish_now'])
+        def cmd_publish_now(message):
+            self._cmd_publish_now(message)
+
+        @self.bot.message_handler(commands=['clear_queue'])
+        def cmd_clear_queue(message):
+            self._cmd_clear_queue(message)
+
+        logger.info("Обработчики Telegram настроены")
+
+    def _handle_channel_message(self, message: types.Message):
         """
         Обработка сообщений из канала
 
         Args:
-            update: Обновление от Telegram
-            context: Контекст бота
+            message: Сообщение от Telegram
         """
         try:
-            message = update.channel_post
             if not message or not message.text:
                 return
 
             # Проверяем, что сообщение из нужного канала
             chat_id = str(message.chat.id)
-            if chat_id != self.source_channel and f"@{message.chat.username}" != self.source_channel:
+            chat_username = f"@{message.chat.username}" if message.chat.username else None
+
+            if chat_id != self.source_channel and chat_username != self.source_channel:
                 return
 
             # Фильтруем старые сообщения - обрабатываем только новые с момента запуска бота
-            if message.date < self.bot_start_time:
-                logger.debug(f"Пропускаем старое сообщение от {message.date}")
+            message_date = datetime.fromtimestamp(message.date, tz=timezone.utc)
+            if message_date < self.bot_start_time:
+                logger.debug(f"Пропускаем старое сообщение от {message_date}")
                 return
 
             logger.info(f"Получено новое сообщение из канала: {message.text[:100]}")
@@ -82,12 +99,9 @@ class TelegramHandler:
 
             if urls:
                 logger.info(f"Найдено {len(urls)} ссылок: {urls}")
-                # Здесь будет вызов обработки статей
-                context.job_queue.run_once(
-                    self.process_urls,
-                    when=1,
-                    data={'urls': urls}
-                )
+                # Обработка URL в отдельном потоке чтобы не блокировать бота
+                thread = threading.Thread(target=self._process_urls, args=(urls,))
+                thread.start()
             else:
                 logger.info("В сообщении не найдено ссылок")
 
@@ -126,17 +140,16 @@ class TelegramHandler:
                 return True
         return False
 
-    async def process_urls(self, context: ContextTypes.DEFAULT_TYPE):
+    def _process_urls(self, urls: List[str]):
         """
         Обработка найденных URL
 
         Args:
-            context: Контекст бота
+            urls: Список URL для обработки
         """
         from news_parser import NewsParser
         from deepseek_client import DeepSeekClient
 
-        urls = context.job.data.get('urls', [])
         parser = NewsParser()
         deepseek = DeepSeekClient()
 
@@ -173,7 +186,7 @@ class TelegramHandler:
                         if is_urgent:
                             # Срочные новости публикуем немедленно
                             logger.info(f"Срочная новость! Публикуем немедленно: {article_data.get('title')}")
-                            await self.publish_news_by_id(news_id)
+                            self.publish_news_by_id(news_id)
                         else:
                             logger.info(f"Новость добавлена в очередь. Публикация: {scheduled_time}")
                 else:
@@ -182,7 +195,7 @@ class TelegramHandler:
             except Exception as e:
                 logger.error(f"Ошибка при обработке URL {url}: {e}")
 
-    async def publish_news_by_id(self, news_id: int) -> bool:
+    def publish_news_by_id(self, news_id: int) -> bool:
         """
         Публикация новости по ID из базы данных
 
@@ -202,10 +215,10 @@ class TelegramHandler:
             final_text = self._format_for_telegram_from_db(news)
 
             # Отправка в целевой канал
-            await self.bot.send_message(
+            self.bot.send_message(
                 chat_id=self.target_channel,
                 text=final_text,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode='Markdown',
                 disable_web_page_preview=False
             )
 
@@ -220,7 +233,7 @@ class TelegramHandler:
             self.db.mark_as_failed(news_id)
             return False
 
-    async def publish_scheduled_news(self):
+    def publish_scheduled_news(self):
         """
         Публикация новостей по расписанию
         Вызывается APScheduler в нужное время
@@ -230,7 +243,7 @@ class TelegramHandler:
             news_list = self.db.get_news_for_publication(limit=1)
 
             for news in news_list:
-                await self.publish_news_by_id(news['id'])
+                self.publish_news_by_id(news['id'])
 
         except Exception as e:
             logger.error(f"Ошибка при публикации по расписанию: {e}")
@@ -261,10 +274,11 @@ class TelegramHandler:
 
     # Команды управления ботом
 
-    async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def _cmd_start(self, message: types.Message):
         """Команда /start"""
         start_time_str = self.bot_start_time.strftime('%Y-%m-%d %H:%M:%S UTC')
-        await update.message.reply_text(
+        self.bot.reply_to(
+            message,
             "Бот автоматической публикации новостей запущен!\n\n"
             f"🕐 Время запуска: {start_time_str}\n"
             f"📡 Мониторинг канала: активен (только новые сообщения)\n\n"
@@ -272,7 +286,7 @@ class TelegramHandler:
             "Используйте /help для списка команд."
         )
 
-    async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def _cmd_help(self, message: types.Message):
         """Команда /help"""
         help_text = """
 Доступные команды:
@@ -284,9 +298,9 @@ class TelegramHandler:
 /clear_queue - Очистить очередь новостей
 /help - Это сообщение
 """
-        await update.message.reply_text(help_text)
+        self.bot.reply_to(message, help_text)
 
-    async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def _cmd_status(self, message: types.Message):
         """Команда /status"""
         try:
             stats = self.db.get_queue_status()
@@ -311,19 +325,19 @@ class TelegramHandler:
                     urgent_mark = "🔥 " if news['is_urgent'] else ""
                     status_text += f"{urgent_mark}{news['id']}. {news['title'][:50]}... ({news['scheduled_time']})\n"
 
-            await update.message.reply_text(status_text)
+            self.bot.reply_to(message, status_text)
 
         except Exception as e:
             logger.error(f"Ошибка в команде /status: {e}")
-            await update.message.reply_text("Ошибка при получении статуса")
+            self.bot.reply_to(message, "Ошибка при получении статуса")
 
-    async def cmd_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def _cmd_queue(self, message: types.Message):
         """Команда /queue"""
         try:
             news_list = self.db.get_pending_news()
 
             if not news_list:
-                await update.message.reply_text("Очередь пуста")
+                self.bot.reply_to(message, "Очередь пуста")
                 return
 
             queue_text = f"📋 Новости в очереди ({len(news_list)}):\n\n"
@@ -337,72 +351,68 @@ class TelegramHandler:
             if len(news_list) > 20:
                 queue_text += f"\n... и еще {len(news_list) - 20} новостей"
 
-            await update.message.reply_text(queue_text)
+            self.bot.reply_to(message, queue_text)
 
         except Exception as e:
             logger.error(f"Ошибка в команде /queue: {e}")
-            await update.message.reply_text("Ошибка при получении очереди")
+            self.bot.reply_to(message, "Ошибка при получении очереди")
 
-    async def cmd_publish_now(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def _cmd_publish_now(self, message: types.Message):
         """Команда /publish_now <id>"""
         try:
             # Проверка прав администратора
-            if Config.ADMIN_USER_ID and str(update.effective_user.id) != Config.ADMIN_USER_ID:
-                await update.message.reply_text("У вас нет прав для выполнения этой команды")
+            if Config.ADMIN_USER_ID and str(message.from_user.id) != Config.ADMIN_USER_ID:
+                self.bot.reply_to(message, "У вас нет прав для выполнения этой команды")
                 return
 
-            if not context.args:
-                await update.message.reply_text("Использование: /publish_now <id>")
+            # Извлекаем ID из команды
+            parts = message.text.split()
+            if len(parts) < 2:
+                self.bot.reply_to(message, "Использование: /publish_now <id>")
                 return
 
-            news_id = int(context.args[0])
+            news_id = int(parts[1])
 
-            await update.message.reply_text(f"Публикую новость ID {news_id}...")
+            self.bot.reply_to(message, f"Публикую новость ID {news_id}...")
 
-            success = await self.publish_news_by_id(news_id)
+            success = self.publish_news_by_id(news_id)
 
             if success:
-                await update.message.reply_text("✅ Новость успешно опубликована!")
+                self.bot.reply_to(message, "✅ Новость успешно опубликована!")
             else:
-                await update.message.reply_text("❌ Ошибка при публикации новости")
+                self.bot.reply_to(message, "❌ Ошибка при публикации новости")
 
         except ValueError:
-            await update.message.reply_text("Неверный формат ID")
+            self.bot.reply_to(message, "Неверный формат ID")
         except Exception as e:
             logger.error(f"Ошибка в команде /publish_now: {e}")
-            await update.message.reply_text("Ошибка при выполнении команды")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
 
-    async def cmd_clear_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def _cmd_clear_queue(self, message: types.Message):
         """Команда /clear_queue"""
         try:
             # Проверка прав администратора
-            if Config.ADMIN_USER_ID and str(update.effective_user.id) != Config.ADMIN_USER_ID:
-                await update.message.reply_text("У вас нет прав для выполнения этой команды")
+            if Config.ADMIN_USER_ID and str(message.from_user.id) != Config.ADMIN_USER_ID:
+                self.bot.reply_to(message, "У вас нет прав для выполнения этой команды")
                 return
 
             success = self.db.clear_queue()
 
             if success:
-                await update.message.reply_text("✅ Очередь очищена")
+                self.bot.reply_to(message, "✅ Очередь очищена")
             else:
-                await update.message.reply_text("❌ Ошибка при очистке очереди")
+                self.bot.reply_to(message, "❌ Ошибка при очистке очереди")
 
         except Exception as e:
             logger.error(f"Ошибка в команде /clear_queue: {e}")
-            await update.message.reply_text("Ошибка при выполнении команды")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
 
-    async def start(self):
-        """Запуск бота"""
-        await self.setup()
-        await self.application.initialize()
-        await self.application.start()
-        await self.application.updater.start_polling()
-        logger.info("Бот запущен и ожидает сообщений")
+    def start_polling(self):
+        """Запуск бота в режиме polling"""
+        logger.info("Запуск бота в режиме polling")
+        self.bot.infinity_polling(none_stop=True, interval=1)
 
-    async def stop(self):
+    def stop(self):
         """Остановка бота"""
-        if self.application:
-            await self.application.updater.stop()
-            await self.application.stop()
-            await self.application.shutdown()
-        logger.info("Бот остановлен")
+        logger.info("Остановка бота")
+        self.bot.stop_polling()

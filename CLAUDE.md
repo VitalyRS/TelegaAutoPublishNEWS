@@ -30,6 +30,14 @@ Required credentials in `.env`:
 - `DEEPSEEK_API_KEY` - from platform.deepseek.com
 - `ADMIN_USER_ID` - Telegram user ID for admin commands
 
+## Technology Stack
+
+- **Telegram Bot Library**: pyTelegramBotAPI (`import telebot`)
+- **Scheduler**: APScheduler with BackgroundScheduler for automated publishing
+- **Database**: SQLite for news queue management
+- **News Parsing**: newspaper3k for article extraction
+- **AI Processing**: DeepSeek API via OpenAI library for translation and formatting
+
 ## Architecture Overview
 
 This bot implements an automated news pipeline with scheduled publishing:
@@ -68,11 +76,13 @@ Articles containing keywords from `URGENT_KEYWORDS` (`молния`, `breaking` 
   - Check if current time matches publication schedule
 
 ### app.py Orchestration
-- Sets up APScheduler with cron triggers for each hour in `PUBLISH_SCHEDULE`
+- Sets up BackgroundScheduler (APScheduler) with cron triggers for each hour in `PUBLISH_SCHEDULE`
 - Each trigger calls `telegram_handler.publish_scheduled_news()` which:
   - Queries database for articles where `scheduled_time <= now()`
   - Publishes via `publish_news_by_id()`
   - Updates article status
+- Bot runs in synchronous mode using `telebot.TeleBot` with polling
+- Long-running tasks (URL processing) execute in separate threads to avoid blocking
 
 ## Configuration Customization
 
@@ -109,9 +119,27 @@ Public commands:
 
 The processed text is stored in database and published with source link footer.
 
+## Implementation Details
+
+### Telegram Handler
+- Uses decorator-based handlers: `@bot.channel_post_handler()` for channel messages
+- Commands registered via `@bot.message_handler(commands=['...'])`
+- `infinity_polling()` for continuous message polling
+- Message handlers execute synchronously; background tasks use threading
+- All handlers are set up in `_setup_handlers()` during initialization
+
+### Message Processing Flow
+1. Channel post received → `_handle_channel_message()`
+2. URLs extracted → spawns thread for `_process_urls()`
+3. Thread parses articles, processes via DeepSeek, adds to database
+4. Urgent news published immediately via `publish_news_by_id()`
+5. Regular news waits for APScheduler to trigger `publish_scheduled_news()`
+
 ## Troubleshooting
 
 Check `bot.log` for errors. Common issues:
 - **Channel access**: Bot must be admin in both SOURCE and TARGET channels
 - **newspaper3k parsing**: Some sites block automated scraping
-- **Schedule not triggering**: Verify APScheduler is running and time slots are future times
+- **Schedule not triggering**: Verify BackgroundScheduler is running and time slots are future times
+- **Import errors**: Ensure `pyTelegramBotAPI` (not `python-telegram-bot`) is installed
+- **Polling errors**: Check bot token validity and network connectivity

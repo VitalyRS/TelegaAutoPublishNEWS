@@ -345,7 +345,8 @@ class TelegramHandler:
             f"🕐 Время запуска: {start_time_str}\n"
             f"📡 Мониторинг канала: активен (только новые сообщения)\n\n"
             f"{self.scheduler.format_schedule()}\n\n"
-            "Используйте /help для списка команд."
+            "Используйте /help для списка команд.",
+            parse_mode=None
         )
 
     def _cmd_help(self, message: types.Message):
@@ -357,16 +358,17 @@ class TelegramHandler:
 /start - Информация о боте
 /status - Статус очереди новостей
 /queue - Показать новости в очереди
-/view <id> - Просмотр публикации по ID
-/publishnow <id> (или /publish_now) - Опубликовать новость немедленно
+/view [id] - Просмотр публикации по ID
+/publishnow [id] (или /publish_now) - Опубликовать новость немедленно
 /clear_queue - Очистить очередь новостей
-/set_style <style> (или /setstyle) - Изменить стиль написания статей
+/set_style [style] (или /setstyle) - Изменить стиль написания статей
 /get_style (или /getstyle) - Показать текущий стиль написания
 /help - Это сообщение
 
 Доступные стили: {available_styles}
 """
-        self.bot.reply_to(message, help_text)
+        # Отправляем без HTML парсинга, так как это обычный текст
+        self.bot.reply_to(message, help_text, parse_mode=None)
 
     def _cmd_status(self, message: types.Message):
         """Команда /status"""
@@ -393,7 +395,7 @@ class TelegramHandler:
                     urgent_mark = "🔥 " if news['is_urgent'] else ""
                     status_text += f"{urgent_mark}{news['id']}. {news['title'][:50]}... ({news['scheduled_time']})\n"
 
-            self.bot.reply_to(message, status_text)
+            self.bot.reply_to(message, status_text, parse_mode=None)
 
         except Exception as e:
             logger.error(f"Ошибка в команде /status: {e}")
@@ -419,7 +421,7 @@ class TelegramHandler:
             if len(news_list) > 20:
                 queue_text += f"\n... и еще {len(news_list) - 20} новостей"
 
-            self.bot.reply_to(message, queue_text)
+            self.bot.reply_to(message, queue_text, parse_mode=None)
 
         except Exception as e:
             logger.error(f"Ошибка в команде /queue: {e}")
@@ -448,7 +450,7 @@ class TelegramHandler:
             # Извлекаем ID из команды
             parts = message.text.split()
             if len(parts) < 2:
-                self.bot.reply_to(message, "Использование: /publishnow <id> или /publish_now <id>")
+                self.bot.reply_to(message, "Использование: /publishnow [id] или /publish_now [id]", parse_mode=None)
                 return
 
             news_id = int(parts[1])
@@ -525,9 +527,10 @@ class TelegramHandler:
                 available_styles = '\n'.join([f"- {style}" for style in Config.AVAILABLE_STYLES])
                 self.bot.reply_to(
                     message,
-                    f"Использование: /set_style <style> или /setstyle <style>\n\n"
+                    f"Использование: /set_style [style] или /setstyle [style]\n\n"
                     f"Доступные стили:\n{available_styles}\n\n"
-                    f"Текущий стиль: {self.deepseek.get_style()}"
+                    f"Текущий стиль: {self.deepseek.get_style()}",
+                    parse_mode=None
                 )
                 return
 
@@ -539,7 +542,8 @@ class TelegramHandler:
                 self.bot.reply_to(
                     message,
                     f"❌ Неизвестный стиль: {new_style}\n\n"
-                    f"Доступные стили:\n{available_styles}"
+                    f"Доступные стили:\n{available_styles}",
+                    parse_mode=None
                 )
                 return
 
@@ -549,8 +553,9 @@ class TelegramHandler:
 
             self.bot.reply_to(
                 message,
-                f"✅ Стиль написания изменен на: **{new_style}**\n\n"
-                f"Все новые статьи будут обрабатываться в этом стиле."
+                f"✅ Стиль написания изменен на: {new_style}\n\n"
+                f"Все новые статьи будут обрабатываться в этом стиле.",
+                parse_mode=None
             )
 
         except Exception as e:
@@ -565,9 +570,10 @@ class TelegramHandler:
 
             self.bot.reply_to(
                 message,
-                f"📝 Текущий стиль написания: **{current_style}**\n\n"
+                f"📝 Текущий стиль написания: {current_style}\n\n"
                 f"Доступные стили:\n{available_styles}\n\n"
-                f"Чтобы изменить стиль, используйте: /set_style <style>"
+                f"Чтобы изменить стиль, используйте: /set_style [style]",
+                parse_mode=None
             )
 
         except Exception as e:
@@ -580,7 +586,7 @@ class TelegramHandler:
             # Извлекаем ID из команды
             parts = message.text.split()
             if len(parts) < 2:
-                self.bot.reply_to(message, "Использование: /view <id>\n\nУкажите ID публикации для просмотра.")
+                self.bot.reply_to(message, "Использование: /view [id]\n\nУкажите ID публикации для просмотра.", parse_mode=None)
                 return
 
             news_id = int(parts[1])
@@ -616,7 +622,7 @@ class TelegramHandler:
             )
 
         except ValueError:
-            self.bot.reply_to(message, "Неверный формат ID. Используйте: /view <id>")
+            self.bot.reply_to(message, "Неверный формат ID. Используйте: /view [id]", parse_mode=None)
         except Exception as e:
             logger.error(f"Ошибка в команде /view: {e}")
             self.bot.reply_to(message, "Ошибка при выполнении команды")

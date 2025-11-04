@@ -19,7 +19,7 @@ python app.py flask
 pip install -r requirements.txt
 
 # Configure environment
-cp .env.example .env
+cp .env .env
 # Edit .env with your tokens and IDs
 ```
 

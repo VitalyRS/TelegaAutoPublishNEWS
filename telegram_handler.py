@@ -58,7 +58,7 @@ class TelegramHandler:
         def cmd_queue(message):
             self._cmd_queue(message)
 
-        @self.bot.message_handler(commands=['publish_now'])
+        @self.bot.message_handler(commands=['publish_now', 'publishnow'])
         def cmd_publish_now(message):
             self._cmd_publish_now(message)
 
@@ -206,30 +206,39 @@ class TelegramHandler:
             True если успешно
         """
         try:
+            logger.info(f"Начинаем публикацию новости ID {news_id}")
+
             news = self.db.get_news_by_id(news_id)
             if not news:
-                logger.error(f"Новость с ID {news_id} не найдена")
+                logger.error(f"Новость с ID {news_id} не найдена в базе данных")
                 return False
+
+            logger.info(f"Новость найдена: {news.get('title')[:50]}...")
+            logger.info(f"Целевой канал: {self.target_channel}")
 
             # Формирование финального текста
             final_text = self._format_for_telegram_from_db(news)
+            logger.info(f"Текст отформатирован, длина: {len(final_text)} символов")
 
             # Отправка в целевой канал
+            logger.info(f"Отправляем сообщение в канал {self.target_channel}")
             self.bot.send_message(
                 chat_id=self.target_channel,
                 text=final_text,
                 parse_mode='Markdown',
                 disable_web_page_preview=False
             )
+            logger.info("Сообщение успешно отправлено")
 
             # Отметить как опубликованную
             self.db.mark_as_published(news_id)
+            logger.info(f"Статус новости {news_id} обновлен на 'published'")
 
-            logger.info(f"Новость успешно опубликована: {news.get('title')}")
+            logger.info(f"✅ Новость успешно опубликована: {news.get('title')}")
             return True
 
         except Exception as e:
-            logger.error(f"Ошибка при публикации новости {news_id}: {e}")
+            logger.error(f"❌ Ошибка при публикации новости {news_id}: {e}", exc_info=True)
             self.db.mark_as_failed(news_id)
             return False
 
@@ -294,7 +303,7 @@ class TelegramHandler:
 /start - Информация о боте
 /status - Статус очереди новостей
 /queue - Показать новости в очереди
-/publish_now <id> - Опубликовать новость немедленно
+/publishnow <id> (или /publish_now) - Опубликовать новость немедленно
 /clear_queue - Очистить очередь новостей
 /help - Это сообщение
 """
@@ -358,20 +367,33 @@ class TelegramHandler:
             self.bot.reply_to(message, "Ошибка при получении очереди")
 
     def _cmd_publish_now(self, message: types.Message):
-        """Команда /publish_now <id>"""
+        """Команда /publish_now <id> или /publishnow <id>"""
         try:
+            user_id = str(message.from_user.id)
+            logger.info(f"Команда /publishnow от пользователя ID: {user_id}")
+
             # Проверка прав администратора
-            if Config.ADMIN_USER_ID and str(message.from_user.id) != Config.ADMIN_USER_ID:
-                self.bot.reply_to(message, "У вас нет прав для выполнения этой команды")
-                return
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    logger.warning(f"Отказано в доступе для пользователя {user_id}. Требуется: {Config.ADMIN_USER_ID}")
+                    self.bot.reply_to(
+                        message,
+                        f"❌ У вас нет прав для выполнения этой команды\n"
+                        f"Ваш ID: {user_id}\n"
+                        f"Требуется ID администратора (установите в .env файле ADMIN_USER_ID)"
+                    )
+                    return
+            else:
+                logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
 
             # Извлекаем ID из команды
             parts = message.text.split()
             if len(parts) < 2:
-                self.bot.reply_to(message, "Использование: /publish_now <id>")
+                self.bot.reply_to(message, "Использование: /publishnow <id> или /publish_now <id>")
                 return
 
             news_id = int(parts[1])
+            logger.info(f"Попытка опубликовать новость ID: {news_id}")
 
             self.bot.reply_to(message, f"Публикую новость ID {news_id}...")
 
@@ -391,10 +413,22 @@ class TelegramHandler:
     def _cmd_clear_queue(self, message: types.Message):
         """Команда /clear_queue"""
         try:
+            user_id = str(message.from_user.id)
+            logger.info(f"Команда /clear_queue от пользователя ID: {user_id}")
+
             # Проверка прав администратора
-            if Config.ADMIN_USER_ID and str(message.from_user.id) != Config.ADMIN_USER_ID:
-                self.bot.reply_to(message, "У вас нет прав для выполнения этой команды")
-                return
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    logger.warning(f"Отказано в доступе для пользователя {user_id}. Требуется: {Config.ADMIN_USER_ID}")
+                    self.bot.reply_to(
+                        message,
+                        f"❌ У вас нет прав для выполнения этой команды\n"
+                        f"Ваш ID: {user_id}\n"
+                        f"Требуется ID администратора"
+                    )
+                    return
+            else:
+                logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
 
             success = self.db.clear_queue()
 
@@ -410,6 +444,14 @@ class TelegramHandler:
     def start_polling(self):
         """Запуск бота в режиме polling"""
         logger.info("Запуск бота в режиме polling")
+
+        # Удаляем webhook если он был установлен ранее
+        try:
+            self.bot.remove_webhook()
+            logger.info("Webhook удален, запускаем polling")
+        except Exception as e:
+            logger.warning(f"Не удалось удалить webhook: {e}")
+
         self.bot.infinity_polling(none_stop=True, interval=1)
 
     def stop(self):

@@ -14,7 +14,6 @@ from scheduler import PublicationScheduler
 
 logger = logging.getLogger(__name__)
 
-
 class TelegramHandler:
     """Класс для работы с Telegram API"""
 

@@ -22,7 +22,7 @@ class TelegramHandler:
         self.bot_token = Config.TELEGRAM_BOT_TOKEN
         self.source_channel = Config.SOURCE_CHANNEL_ID
         self.target_channel = Config.TARGET_CHANNEL_ID
-        self.bot = telebot.TeleBot(self.bot_token, parse_mode='Markdown')
+        self.bot = telebot.TeleBot(self.bot_token, parse_mode='HTML')
         self.db = NewsDatabase()
         self.scheduler = PublicationScheduler()
         self.urgent_keywords = Config.get_urgent_keywords()
@@ -236,7 +236,7 @@ class TelegramHandler:
             self.bot.send_message(
                 chat_id=self.target_channel,
                 text=final_text,
-                parse_mode='Markdown',
+                parse_mode='HTML',
                 disable_web_page_preview=False
             )
             logger.info("Сообщение успешно отправлено")
@@ -272,25 +272,63 @@ class TelegramHandler:
     def _format_for_telegram_from_db(news: dict) -> str:
         """
         Форматирование текста для Telegram из БД
+        Заголовок делается жирным через HTML, остальное - простой текст
 
         Args:
             news: Данные новости из БД
 
         Returns:
-            Отформатированный текст
+            Отформатированный текст для HTML parse mode
         """
+        import html
+
         processed_text = news.get('processed_text', '')
         url = news.get('url', '')
 
-        footer = f"\n\n[Источник]({url})"
+        # Разбиваем текст на строки
+        lines = processed_text.split('\n')
+
+        # Первая непустая строка - это заголовок
+        title_line = ''
+        body_lines = []
+        title_found = False
+
+        for line in lines:
+            if not title_found and line.strip():
+                # Это заголовок
+                title_line = line.strip()
+                title_found = True
+            elif title_found:
+                # Все после заголовка
+                body_lines.append(line)
+
+        # Экранируем HTML символы в заголовке и тексте
+        title_escaped = html.escape(title_line)
+        body_text = '\n'.join(body_lines).strip()
+        body_escaped = html.escape(body_text)
+
+        # Форматируем заголовок жирным
+        formatted_title = f"<b>{title_escaped}</b>" if title_escaped else ""
+
+        # Собираем финальный текст
+        if formatted_title and body_escaped:
+            final_text = f"{formatted_title}\n\n{body_escaped}"
+        elif formatted_title:
+            final_text = formatted_title
+        else:
+            final_text = body_escaped
+
+        # Добавляем ссылку на источник (HTML формат)
+        footer = f'\n\n<a href="{url}">Источник</a>'
 
         # Telegram имеет лимит в 4096 символов
         max_length = 4096 - len(footer) - 100  # запас
 
-        if len(processed_text) > max_length:
-            processed_text = processed_text[:max_length] + "..."
+        if len(final_text) > max_length:
+            final_text = final_text[:max_length] + "..."
 
-        return processed_text + footer
+        return final_text + footer
+
 
     # Команды управления ботом
 

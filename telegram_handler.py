@@ -79,6 +79,10 @@ class TelegramHandler:
         def cmd_get_style(message):
             self._cmd_get_style(message)
 
+        @self.bot.message_handler(commands=['view'])
+        def cmd_view(message):
+            self._cmd_view(message)
+
         logger.info("Обработчики Telegram настроены")
 
     def _handle_channel_message(self, message: types.Message):
@@ -318,8 +322,8 @@ class TelegramHandler:
         else:
             final_text = body_escaped
 
-        # Добавляем ссылку на источник (HTML формат)
-        footer = f'\n\n<a href="{url}">Источник</a>'
+        # Добавляем подпись канала и ссылку на источник (HTML формат)
+        footer = f'\n\nКанал: @iberia_news\n<a href="{url}">Источник</a>'
 
         # Telegram имеет лимит в 4096 символов
         max_length = 4096 - len(footer) - 100  # запас
@@ -353,6 +357,7 @@ class TelegramHandler:
 /start - Информация о боте
 /status - Статус очереди новостей
 /queue - Показать новости в очереди
+/view <id> - Просмотр публикации по ID
 /publishnow <id> (или /publish_now) - Опубликовать новость немедленно
 /clear_queue - Очистить очередь новостей
 /set_style <style> (или /setstyle) - Изменить стиль написания статей
@@ -567,6 +572,53 @@ class TelegramHandler:
 
         except Exception as e:
             logger.error(f"Ошибка в команде /get_style: {e}")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _cmd_view(self, message: types.Message):
+        """Команда /view <id> - просмотр публикации по ID"""
+        try:
+            # Извлекаем ID из команды
+            parts = message.text.split()
+            if len(parts) < 2:
+                self.bot.reply_to(message, "Использование: /view <id>\n\nУкажите ID публикации для просмотра.")
+                return
+
+            news_id = int(parts[1])
+            logger.info(f"Запрос на просмотр публикации ID: {news_id}")
+
+            # Получаем новость из БД
+            news = self.db.get_news_by_id(news_id)
+            if not news:
+                self.bot.reply_to(message, f"❌ Публикация с ID {news_id} не найдена")
+                return
+
+            # Форматируем текст для отображения
+            final_text = self._format_for_telegram_from_db(news)
+
+            # Добавляем информацию о статусе
+            status_emoji = {
+                'pending': '⏳',
+                'published': '✅',
+                'failed': '❌'
+            }
+            status = news.get('status', 'unknown')
+            status_text = f"{status_emoji.get(status, '❓')} Статус: {status}\n"
+            scheduled_text = f"⏰ Запланировано: {news.get('scheduled_time', 'не указано')}\n"
+
+            info_text = f"ID: {news_id}\n{status_text}{scheduled_text}\n{'='*30}\n\n"
+
+            # Отправляем превью публикации
+            self.bot.reply_to(
+                message,
+                info_text + final_text,
+                parse_mode='HTML',
+                disable_web_page_preview=False
+            )
+
+        except ValueError:
+            self.bot.reply_to(message, "Неверный формат ID. Используйте: /view <id>")
+        except Exception as e:
+            logger.error(f"Ошибка в команде /view: {e}")
             self.bot.reply_to(message, "Ошибка при выполнении команды")
 
     def start_polling(self):

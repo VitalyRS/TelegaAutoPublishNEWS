@@ -38,6 +38,12 @@ class Config:
     # ID администратора для команд управления
     ADMIN_USER_ID = os.getenv('ADMIN_USER_ID')
 
+    # Стиль написания статей (informative, ironic, cynical, playful, mocking)
+    ARTICLE_STYLE = os.getenv('ARTICLE_STYLE', 'informative')
+
+    # Доступные стили
+    AVAILABLE_STYLES = ['informative', 'ironic', 'cynical', 'playful', 'mocking']
+
     @classmethod
     def get_publish_hours(cls) -> list:
         """Получить часы публикации в виде списка"""
@@ -47,6 +53,12 @@ class Config:
     def get_urgent_keywords(cls) -> list:
         """Получить список ключевых слов для срочных новостей"""
         return [kw.strip().lower() for kw in cls.URGENT_KEYWORDS.split(',')]
+
+    @classmethod
+    def get_article_style(cls) -> str:
+        """Получить текущий стиль написания статей"""
+        style = cls.ARTICLE_STYLE.lower()
+        return style if style in cls.AVAILABLE_STYLES else 'informative'
 
     @staticmethod
     def validate():

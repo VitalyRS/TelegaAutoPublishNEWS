@@ -30,6 +30,11 @@ class TelegramHandler:
         self.bot_start_time = datetime.now(timezone.utc)
         logger.info(f"Бот запущен. Будут обрабатываться только сообщения после {self.bot_start_time}")
 
+        # Инициализация DeepSeek клиента с текущим стилем
+        from deepseek_client import DeepSeekClient
+        self.deepseek = DeepSeekClient()
+        logger.info(f"DeepSeek инициализирован со стилем: {self.deepseek.get_style()}")
+
         # Настройка обработчиков
         self._setup_handlers()
 
@@ -65,6 +70,14 @@ class TelegramHandler:
         @self.bot.message_handler(commands=['clear_queue'])
         def cmd_clear_queue(message):
             self._cmd_clear_queue(message)
+
+        @self.bot.message_handler(commands=['set_style', 'setstyle'])
+        def cmd_set_style(message):
+            self._cmd_set_style(message)
+
+        @self.bot.message_handler(commands=['get_style', 'getstyle'])
+        def cmd_get_style(message):
+            self._cmd_get_style(message)
 
         logger.info("Обработчики Telegram настроены")
 
@@ -148,10 +161,8 @@ class TelegramHandler:
             urls: Список URL для обработки
         """
         from news_parser import NewsParser
-        from deepseek_client import DeepSeekClient
 
         parser = NewsParser()
-        deepseek = DeepSeekClient()
 
         for url in urls[:Config.MAX_ARTICLES_PER_RUN]:
             try:
@@ -165,8 +176,8 @@ class TelegramHandler:
                 # Проверка срочности
                 is_urgent = self.is_urgent_news(article_data.get('title', '') + ' ' + article_data.get('text', ''))
 
-                # Обработка через DeepSeek
-                processed_text = deepseek.process_article(article_data)
+                # Обработка через DeepSeek с текущим стилем
+                processed_text = self.deepseek.process_article(article_data)
 
                 if processed_text:
                     # Определение времени публикации
@@ -297,7 +308,8 @@ class TelegramHandler:
 
     def _cmd_help(self, message: types.Message):
         """Команда /help"""
-        help_text = """
+        available_styles = ', '.join(Config.AVAILABLE_STYLES)
+        help_text = f"""
 Доступные команды:
 
 /start - Информация о боте
@@ -305,7 +317,11 @@ class TelegramHandler:
 /queue - Показать новости в очереди
 /publishnow <id> (или /publish_now) - Опубликовать новость немедленно
 /clear_queue - Очистить очередь новостей
+/set_style <style> (или /setstyle) - Изменить стиль написания статей
+/get_style (или /getstyle) - Показать текущий стиль написания
 /help - Это сообщение
+
+Доступные стили: {available_styles}
 """
         self.bot.reply_to(message, help_text)
 
@@ -439,6 +455,80 @@ class TelegramHandler:
 
         except Exception as e:
             logger.error(f"Ошибка в команде /clear_queue: {e}")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _cmd_set_style(self, message: types.Message):
+        """Команда /set_style <style> или /setstyle <style>"""
+        try:
+            user_id = str(message.from_user.id)
+            logger.info(f"Команда /set_style от пользователя ID: {user_id}")
+
+            # Проверка прав администратора
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    logger.warning(f"Отказано в доступе для пользователя {user_id}")
+                    self.bot.reply_to(
+                        message,
+                        f"❌ У вас нет прав для выполнения этой команды\n"
+                        f"Ваш ID: {user_id}"
+                    )
+                    return
+            else:
+                logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
+
+            # Извлекаем стиль из команды
+            parts = message.text.split()
+            if len(parts) < 2:
+                available_styles = '\n'.join([f"- {style}" for style in Config.AVAILABLE_STYLES])
+                self.bot.reply_to(
+                    message,
+                    f"Использование: /set_style <style> или /setstyle <style>\n\n"
+                    f"Доступные стили:\n{available_styles}\n\n"
+                    f"Текущий стиль: {self.deepseek.get_style()}"
+                )
+                return
+
+            new_style = parts[1].lower()
+
+            # Проверяем доступность стиля
+            if new_style not in Config.AVAILABLE_STYLES:
+                available_styles = '\n'.join([f"- {style}" for style in Config.AVAILABLE_STYLES])
+                self.bot.reply_to(
+                    message,
+                    f"❌ Неизвестный стиль: {new_style}\n\n"
+                    f"Доступные стили:\n{available_styles}"
+                )
+                return
+
+            # Устанавливаем новый стиль
+            self.deepseek.set_style(new_style)
+            logger.info(f"Стиль изменен на: {new_style}")
+
+            self.bot.reply_to(
+                message,
+                f"✅ Стиль написания изменен на: **{new_style}**\n\n"
+                f"Все новые статьи будут обрабатываться в этом стиле."
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка в команде /set_style: {e}")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _cmd_get_style(self, message: types.Message):
+        """Команда /get_style или /getstyle"""
+        try:
+            current_style = self.deepseek.get_style()
+            available_styles = '\n'.join([f"- {style}" for style in Config.AVAILABLE_STYLES])
+
+            self.bot.reply_to(
+                message,
+                f"📝 Текущий стиль написания: **{current_style}**\n\n"
+                f"Доступные стили:\n{available_styles}\n\n"
+                f"Чтобы изменить стиль, используйте: /set_style <style>"
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка в команде /get_style: {e}")
             self.bot.reply_to(message, "Ошибка при выполнении команды")
 
     def start_polling(self):

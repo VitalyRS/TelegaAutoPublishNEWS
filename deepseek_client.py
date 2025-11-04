@@ -41,6 +41,7 @@ class DeepSeekClient:
                 logger.error("Не получен ответ от DeepSeek API")
                 return None
 
+
         except Exception as e:
             logger.error(f"Ошибка при обработке статьи через DeepSeek: {e}")
             return None

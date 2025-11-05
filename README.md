@@ -21,7 +21,17 @@
   - `/queue` - список новостей в очереди
   - `/publish_now <id>` - немедленная публикация
   - `/clear_queue` - очистка очереди
-- **База данных SQLite** для хранения очереди новостей
+  - `/view <id>` - предпросмотр статьи
+  - `/rewrite <id>` - переписать статью с новым стилем
+  - `/config` - показать настройки бота
+  - `/set_config <key> <value>` - изменить настройку
+  - `/set_style <style>` - изменить стиль написания
+  - `/get_style` - показать текущий стиль
+- **База данных PostgreSQL** (Aiven или самостоятельная) для хранения очереди и конфигурации
+- **Динамическая конфигурация** через базу данных без перезапуска
+- **Несколько стилей написания**: informative, ironic, cynical, playful, mocking
+- **Контроль длины текста**: short (~1000 символов), medium (~2000), long (~3000)
+- **Автоматическая очистка** старых опубликованных статей (7 дней)
 
 ## Архитектура
 
@@ -43,18 +53,21 @@
 ┌─────────────────┐      ┌──────────────┐
 │  News Parser    │──────│ DeepSeek API │
 │  (newspaper3k)  │      │  (AI Process)│
-└────────┬────────┘      └──────────────┘
-         │
+└────────┬────────┘      │  + Styles    │
+         │               └──────────────┘
          ▼
 ┌─────────────────┐
-│   SQLite DB     │
-│  (News Queue)   │
+│  PostgreSQL DB  │
+│ (Aiven/Local)   │
+│  - News Queue   │
+│  - Bot Config   │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │  APScheduler    │
 │  (8,12,16,20)   │
+│  + Cleanup 3:00 │
 └────────┬────────┘
          │
          ▼
@@ -110,15 +123,38 @@ cp .env .env
 TELEGRAM_BOT_TOKEN=your_bot_token_here
 SOURCE_CHANNEL_ID=@your_source_channel  # или -100123456789
 TARGET_CHANNEL_ID=@your_target_channel  # или -100123456789
+ADMIN_USER_ID=your_telegram_user_id
 
 # DeepSeek API Configuration
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
 DEEPSEEK_API_URL=https://api.deepseek.com/v1/chat/completions
 
-# Bot Settings
+# PostgreSQL Database (Aiven или самостоятельное развертывание)
+# Вариант 1: Полный URL (рекомендуется для Aiven)
+DATABASE_URL=postgresql://user:password@host:port/dbname?sslmode=require
+
+# Вариант 2: Отдельные параметры (если DATABASE_URL не указан)
+DB_HOST=your-database-host.com
+DB_PORT=5432
+DB_NAME=news_queue
+DB_USER=postgres
+DB_PASSWORD=your_password
+DB_SSLMODE=require  # для Aiven обязательно require
+
+# Bot Settings (могут быть изменены через команды бота без перезапуска)
 PUBLISH_SCHEDULE=8,12,16,20
 URGENT_KEYWORDS=молния,breaking
-ADMIN_USER_ID=your_telegram_user_id
+ARTICLE_STYLE=informative  # informative, ironic, cynical, playful, mocking
+TEXT_LENGTH=medium  # short, medium, long
+MAX_ARTICLES_PER_RUN=5
+CHECK_INTERVAL=60
+MONITOR_FROM_DATE=  # Оставьте пустым для мониторинга с момента запуска, или укажите дату в формате YYYY-MM-DD HH:MM:SS
+
+# Flask Settings (для webhook режима)
+FLASK_HOST=0.0.0.0
+FLASK_PORT=5000
+WEBHOOK_URL=https://your-domain.com
+WEBHOOK_PATH=/webhook
 ```
 
 ### 5. Получение необходимых токенов и ID
@@ -144,32 +180,63 @@ ADMIN_USER_ID=your_telegram_user_id
 
 ## Запуск
 
-### Режим polling (рекомендуется для начала)
+### Режим polling (рекомендуется для разработки и простых развертываний)
 
 ```bash
 python app.py
 ```
 
-Бот будет работать в режиме long polling, получая обновления напрямую от Telegram.
+**Преимущества polling:**
+- Легко настроить, не требует HTTPS
+- Работает за NAT/firewall
+- Подходит для разработки и небольших развертываний
+- Не требует публичного IP или домена
 
-### Режим Flask + webhook (для продакшена)
+### Режим webhook (рекомендуется для продакшена)
 
 ```bash
-python app.py flask
+python app.py webhook
 ```
 
-Требуется настройка HTTPS и домена для webhook.
+**Требования для webhook:**
+- HTTPS домен с действительным SSL сертификатом
+- Публичный IP или домен, доступный из интернета
+- Настройка reverse proxy (nginx/Apache) для SSL терминации
+- Telegram поддерживает порты: 443, 80, 88, 8443
+
+**Преимущества webhook:**
+- Более эффективен для высоконагруженных сценариев
+- Меньшая задержка обработки сообщений
+- Telegram отправляет обновления напрямую на ваш сервер
 
 ## Команды бота
 
 Отправьте боту в личные сообщения:
 
+### Публичные команды (доступны всем)
+
 - `/start` - Информация о боте и расписании
 - `/help` - Список всех команд
 - `/status` - Статус очереди новостей (количество, следующие публикации)
 - `/queue` - Полный список новостей в очереди
-- `/publishnow <id>` (или `/publish_now <id>`) - Опубликовать новость с ID немедленно (только для администратора)
-- `/clear_queue` - Очистить очередь (только для администратора)
+- `/get_style` - Показать текущий стиль написания статей
+
+### Команды администратора (требуют ADMIN_USER_ID)
+
+**Управление публикациями:**
+- `/publish_now <id>` - Опубликовать новость с ID немедленно
+- `/clear_queue` - Очистить очередь новостей
+- `/view <id>` - Предпросмотр статьи по ID перед публикацией
+- `/rewrite <id>` - Переписать статью с новым стилем и/или длиной
+
+**Управление конфигурацией:**
+- `/config` - Показать все настройки бота из базы данных
+- `/set_config <key> <value>` - Обновить настройку в базе данных
+  - Пример: `/set_config ARTICLE_STYLE ironic`
+  - Пример: `/set_config PUBLISH_SCHEDULE 6,10,14,18,22`
+- `/reload_config` - Перезагрузить настройки из БД без перезапуска
+- `/set_style <style>` - Изменить стиль написания статей
+  - Доступные стили: informative, ironic, cynical, playful, mocking
 
 ## Как это работает
 
@@ -212,9 +279,83 @@ APScheduler запускает задачу публикации в каждый
 - Публикуется в целевой канал (`TARGET_CHANNEL_ID`)
 - Статус меняется на "published"
 
-## Настройка расписания
+## Управление конфигурацией
 
-Измените `PUBLISH_SCHEDULE` в `.env`:
+**Важно:** Конфигурация бота теперь хранится в базе данных PostgreSQL и может быть изменена без перезапуска бота!
+
+### Приоритет настроек
+1. **База данных** (наивысший приоритет) - настройки из таблицы `bot_config`
+2. **Переменные окружения** (.env файл) - используются как значения по умолчанию при первом запуске
+
+### Изменяемые настройки (через команды бота)
+
+Используйте `/set_config <key> <value>` для изменения настроек в реальном времени:
+
+```
+/set_config PUBLISH_SCHEDULE 6,10,14,18,22
+/set_config URGENT_KEYWORDS молния,breaking,срочно,экстренно
+/set_config ARTICLE_STYLE ironic
+/set_config TEXT_LENGTH long
+/set_config MAX_ARTICLES_PER_RUN 10
+```
+
+**Доступные настройки:**
+- `PUBLISH_SCHEDULE` - часы публикации через запятую (требует перезапуск для APScheduler)
+- `URGENT_KEYWORDS` - ключевые слова для срочных новостей
+- `ARTICLE_STYLE` - стиль написания (informative, ironic, cynical, playful, mocking)
+- `TEXT_LENGTH` - длина текста (short, medium, long)
+- `MAX_ARTICLES_PER_RUN` - максимум статей на обработку
+- `CHECK_INTERVAL` - интервал проверок в секундах
+- `MONITOR_FROM_DATE` - дата начала мониторинга (YYYY-MM-DD HH:MM:SS)
+
+### Стили написания статей
+
+Бот поддерживает 5 стилей написания:
+
+1. **informative** (по умолчанию) - Объективный журналистский стиль
+   - Нейтральный тон без эмоций
+   - Только факты: кто, что, где, когда, почему
+   - Структурированное изложение
+
+2. **ironic** - Ироничный стиль с сарказмом
+   - Кавычки для иронических эпитетов
+   - Риторические вопросы
+   - Контрастные сопоставления
+
+3. **cynical** - Циничный и недоверчивый стиль
+   - Сомнения в официальных заявлениях
+   - Маркеры недоверия: "якобы", "по словам", "утверждается"
+   - Указание на скрытые мотивы
+
+4. **playful** - Легкий развлекательный стиль
+   - Разговорная речь и современный сленг
+   - Яркие метафоры
+   - Шутливые комментарии
+
+5. **mocking** - Стебно-сатирический стиль
+   - Гиперболы и абсурдные преувеличения
+   - Саркастические комментарии
+   - Высмеивание глупостей и противоречий
+
+**Изменение стиля:**
+```
+/set_style ironic
+/get_style  # проверить текущий стиль
+```
+
+### Контроль длины текста
+
+Три варианта длины обработанных статей:
+- **short** - ~1000 символов (краткая сводка)
+- **medium** - ~2000 символов (стандартная статья)
+- **long** - ~3000 символов (подробная статья)
+
+**Изменение длины:**
+```
+/set_config TEXT_LENGTH short
+```
+
+### Примеры настройки расписания
 
 ```env
 # Публикация каждые 4 часа
@@ -227,14 +368,7 @@ PUBLISH_SCHEDULE=9,10,11,12,13,14,15,16,17,18
 PUBLISH_SCHEDULE=9,18
 ```
 
-## Настройка ключевых слов срочности
-
-Измените `URGENT_KEYWORDS` в `.env`:
-
-```env
-# Расширенный список
-URGENT_KEYWORDS=молния,breaking,срочно,важно,экстренно,внимание,alert,urgent
-```
+**Примечание:** Изменение `PUBLISH_SCHEDULE` требует перезапуска бота для обновления задач APScheduler.
 
 ## Логирование
 
@@ -247,38 +381,94 @@ URGENT_KEYWORDS=молния,breaking,срочно,важно,экстренно
 
 ## База данных
 
-SQLite база `news_queue.db` создается автоматически.
+Бот использует **PostgreSQL** (рекомендуется Aiven для облачного хостинга).
 
-Структура таблицы `news_queue`:
-- `id` - уникальный ID
-- `url` - URL статьи
-- `title` - заголовок
-- `original_text` - исходный текст
-- `processed_text` - обработанный текст
-- `scheduled_time` - время публикации
-- `status` - статус (pending/published/failed)
-- `is_urgent` - флаг срочности
-- `created_at` - время добавления
-- `published_at` - время публикации
+### Настройка PostgreSQL (Aiven)
+
+1. Создайте PostgreSQL сервис на [Aiven Console](https://console.aiven.io/)
+2. Скопируйте Service URI из панели управления Aiven
+3. Добавьте в `.env`:
+   ```env
+   DATABASE_URL=postgresql://user:password@host:port/defaultdb?sslmode=require
+   ```
+
+**Альтернатива:** Используйте отдельные параметры, если DATABASE_URL не доступен:
+```env
+DB_HOST=your-aiven-host.aivencloud.com
+DB_PORT=12345
+DB_NAME=defaultdb
+DB_USER=avnadmin
+DB_PASSWORD=your_password
+DB_SSLMODE=require
+```
+
+### Структура базы данных
+
+#### Таблица `news_queue` (очередь статей):
+- `id` - SERIAL PRIMARY KEY (автоинкремент)
+- `url` - TEXT UNIQUE NOT NULL (предотвращает дубликаты)
+- `title` - TEXT
+- `original_text` - TEXT
+- `processed_text` - TEXT
+- `scheduled_time` - TIMESTAMP (время публикации)
+- `status` - TEXT DEFAULT 'pending' (pending/published/failed)
+- `is_urgent` - BOOLEAN DEFAULT FALSE (флаг немедленной публикации)
+- `created_at` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `published_at` - TIMESTAMP
+- `updated_at` - TIMESTAMP
+
+**Индексы для производительности:**
+- `idx_status` на (status)
+- `idx_scheduled_time` на (scheduled_time)
+- `idx_is_urgent` на (is_urgent)
+- `idx_status_scheduled` композитный на (status, scheduled_time)
+- `idx_published_at` на (published_at) - для запросов очистки
+
+#### Таблица `bot_config` (конфигурация бота):
+- `key` - TEXT PRIMARY KEY (имя настройки)
+- `value` - TEXT NOT NULL (значение настройки)
+- `updated_at` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+**Настройки по умолчанию** (автоматически инициализируются):
+- `PUBLISH_SCHEDULE` = 8,12,16,20
+- `URGENT_KEYWORDS` = молния,breaking
+- `MAX_ARTICLES_PER_RUN` = 5
+- `ARTICLE_STYLE` = informative
+- `TEXT_LENGTH` = medium
+- `CHECK_INTERVAL` = 60
+- `MONITOR_FROM_DATE` = '' (пусто)
+
+### Особенности подключения
+
+- **Connection pooling** (1-10 соединений) для оптимальной производительности
+- Автоматическое управление соединениями с контекстными менеджерами
+- Откат транзакций при ошибках
+- Поддержка SSL/TLS (обязательно для Aiven)
+- Graceful cleanup при остановке
+
+### Автоматическая очистка
+
+Опубликованные статьи старше **7 дней** автоматически удаляются ежедневно в 3:00 утра для поддержания размера базы данных.
 
 ## Структура проекта
 
 ```
 TelegaAutoPublishNEWS/
-├── app.py                  # Основное приложение
-├── config.py               # Конфигурация
-├── database.py             # Работа с БД
+├── app.py                  # Основное приложение (Flask + APScheduler)
+├── config.py               # Конфигурация (с поддержкой БД)
+├── database.py             # Работа с PostgreSQL БД (Aiven/Local)
 ├── scheduler.py            # Планировщик публикаций
-├── telegram_handler.py     # Обработчик Telegram
-├── news_parser.py          # Парсер новостей
-├── deepseek_client.py      # Клиент DeepSeek API
-├── requirements.txt        # Зависимости
+├── telegram_handler.py     # Обработчик Telegram (polling/webhook)
+├── news_parser.py          # Парсер новостей (newspaper3k)
+├── deepseek_client.py      # Клиент DeepSeek API (с поддержкой стилей)
+├── requirements.txt        # Зависимости Python
 ├── .env                    # Переменные окружения (не в git)
 ├── .env.example            # Пример конфигурации
 ├── .gitignore              # Исключения для git
-├── README.md               # Документация
-├── bot.log                 # Лог-файл (создается автоматически)
-└── news_queue.db           # База данных (создается автоматически)
+├── README.md               # Документация пользователя
+├── CLAUDE.md               # Документация для разработчиков
+├── MIGRATION.md            # Инструкции по миграции
+└── bot.log                 # Лог-файл (создается автоматически)
 ```
 
 ## Устранение неполадок
@@ -315,6 +505,34 @@ TelegaAutoPublishNEWS/
   curl https://api.telegram.org/bot<YOUR_BOT_TOKEN>/deleteWebhook
   ```
 - Убедитесь, что не запущено несколько экземпляров бота одновременно
+
+### Проблемы с подключением к PostgreSQL
+
+**Ошибка подключения к Aiven:**
+- Проверьте правильность DATABASE_URL или DB_* параметров
+- Убедитесь в наличии `sslmode=require` для Aiven
+- Проверьте правила firewall и сетевую доступность к хосту БД
+- Убедитесь что сервис PostgreSQL запущен в Aiven Console
+- Проверьте корректность логина/пароля
+
+**Ошибка создания connection pool:**
+- Увеличьте лимит соединений в настройках PostgreSQL (если self-hosted)
+- Для Aiven: проверьте план подписки (есть ли ограничения на соединения)
+- Проверьте логи `bot.log` для деталей ошибки
+
+### Проблемы с конфигурацией
+
+**Изменения в `/set_config` не применяются:**
+- Используйте `/reload_config` для немедленной перезагрузки настроек
+- Изменение `PUBLISH_SCHEDULE` требует полного перезапуска бота
+- Проверьте логи на наличие ошибок при сохранении в БД
+- Используйте `/config` чтобы убедиться что изменения сохранены
+
+**Стиль написания не меняется:**
+- Убедитесь что используете правильное имя стиля (informative, ironic, cynical, playful, mocking)
+- Используйте `/get_style` для проверки текущего стиля
+- Новый стиль применяется только к НОВЫМ статьям после изменения
+- Для уже обработанных статей используйте `/rewrite <id>`
 
 ## Безопасность
 

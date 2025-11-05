@@ -814,8 +814,9 @@ class TelegramHandler:
             status = news.get('status', 'unknown')
             status_text = f"{status_emoji.get(status, '❓')} Статус: {status}\n"
             scheduled_text = f"⏰ Запланировано: {news.get('scheduled_time', 'не указано')}\n"
+            updated_text = f"✏️ Изменено: {news.get('updated_at', 'не изменялось')}\n" if news.get('updated_at') else ""
 
-            info_text = f"ID: {news_id}\n{status_text}{scheduled_text}\n{'='*30}\n\n"
+            info_text = f"ID: {news_id}\n{status_text}{scheduled_text}{updated_text}\n{'='*30}\n\n"
 
             # Создаем inline клавиатуру с действиями
             keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -1626,10 +1627,17 @@ class TelegramHandler:
     def _execute_rewrite(self, call, news_id: int, param: str):
         """Выполнить переписывание статьи"""
         try:
+            # ВАЖНО: Отвечаем на callback сразу, чтобы избежать timeout
+            self.bot.answer_callback_query(call.id, "⏳ Начинаю переписывание...")
+
             # Получаем статью из БД
             news = self.db.get_news_by_id(news_id)
             if not news:
-                self.bot.answer_callback_query(call.id, f"❌ Статья {news_id} не найдена")
+                self.bot.edit_message_text(
+                    f"❌ Статья {news_id} не найдена",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id
+                )
                 return
 
             # Определяем параметры переписывания
@@ -1687,7 +1695,6 @@ class TelegramHandler:
                         message_id=call.message.message_id,
                         parse_mode='Markdown'
                     )
-                    self.bot.answer_callback_query(call.id, "✅ Статья переписана!")
                 else:
                     self.bot.edit_message_text(
                         f"❌ Ошибка при сохранении переписанной статьи в БД",
@@ -1695,7 +1702,6 @@ class TelegramHandler:
                         message_id=call.message.message_id,
                         parse_mode='Markdown'
                     )
-                    self.bot.answer_callback_query(call.id, "❌ Ошибка сохранения")
             else:
                 self.bot.edit_message_text(
                     f"❌ Ошибка при переписывании статьи через DeepSeek API",
@@ -1703,11 +1709,18 @@ class TelegramHandler:
                     message_id=call.message.message_id,
                     parse_mode='Markdown'
                 )
-                self.bot.answer_callback_query(call.id, "❌ Ошибка переписывания")
 
         except Exception as e:
             logger.error(f"Ошибка при выполнении переписывания: {e}")
-            self.bot.answer_callback_query(call.id, "❌ Ошибка выполнения")
+            try:
+                self.bot.edit_message_text(
+                    f"❌ **Ошибка при переписывании**\n\n{str(e)}",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    parse_mode='Markdown'
+                )
+            except:
+                pass  # Игнорируем ошибки редактирования сообщения
 
     # Вспомогательные методы для обработки callback
 
@@ -1745,8 +1758,9 @@ class TelegramHandler:
             status = news.get('status', 'unknown')
             status_text = f"{status_emoji.get(status, '❓')} Статус: {status}\n"
             scheduled_text = f"⏰ Запланировано: {news.get('scheduled_time', 'не указано')}\n"
+            updated_text = f"✏️ Изменено: {news.get('updated_at', 'не изменялось')}\n" if news.get('updated_at') else ""
 
-            info_text = f"ID: {news_id}\n{status_text}{scheduled_text}\n{'='*30}\n\n"
+            info_text = f"ID: {news_id}\n{status_text}{scheduled_text}{updated_text}\n{'='*30}\n\n"
 
             # Создаем inline клавиатуру с действиями
             keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -1846,6 +1860,9 @@ class TelegramHandler:
         try:
             logger.info(f"Выполнение публикации новости ID: {news_id}")
 
+            # ВАЖНО: Отвечаем на callback сразу, чтобы избежать timeout
+            self.bot.answer_callback_query(call.id, "⏳ Публикую...")
+
             self.bot.edit_message_text(
                 f"⏳ Публикую новость ID {news_id}...",
                 chat_id=call.message.chat.id,
@@ -1861,7 +1878,6 @@ class TelegramHandler:
                     message_id=call.message.message_id,
                     parse_mode='Markdown'
                 )
-                self.bot.answer_callback_query(call.id, "✅ Опубликовано!")
             else:
                 self.bot.edit_message_text(
                     f"❌ **Ошибка при публикации новости**\n\nID: {news_id}",
@@ -1869,11 +1885,18 @@ class TelegramHandler:
                     message_id=call.message.message_id,
                     parse_mode='Markdown'
                 )
-                self.bot.answer_callback_query(call.id, "❌ Ошибка публикации")
 
         except Exception as e:
             logger.error(f"Ошибка при выполнении публикации через callback: {e}")
-            self.bot.answer_callback_query(call.id, "Ошибка при публикации")
+            try:
+                self.bot.edit_message_text(
+                    f"❌ **Ошибка при публикации**\n\n{str(e)}",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    parse_mode='Markdown'
+                )
+            except:
+                pass  # Игнорируем ошибки редактирования сообщения
 
     def _show_delete_confirmation(self, call, news_id: int):
         """Показать подтверждение удаления"""
@@ -1920,6 +1943,9 @@ class TelegramHandler:
         try:
             logger.info(f"Удаление новости ID: {news_id}")
 
+            # ВАЖНО: Отвечаем на callback сразу, чтобы избежать timeout
+            self.bot.answer_callback_query(call.id, "⏳ Удаляю...")
+
             # Удаляем новость из БД
             success = self.db.delete_news(news_id)
 
@@ -1930,7 +1956,6 @@ class TelegramHandler:
                     message_id=call.message.message_id,
                     parse_mode='Markdown'
                 )
-                self.bot.answer_callback_query(call.id, "✅ Удалено!")
             else:
                 self.bot.edit_message_text(
                     f"❌ **Ошибка при удалении новости**\n\nID: {news_id}",
@@ -1938,16 +1963,26 @@ class TelegramHandler:
                     message_id=call.message.message_id,
                     parse_mode='Markdown'
                 )
-                self.bot.answer_callback_query(call.id, "❌ Ошибка удаления")
 
         except Exception as e:
             logger.error(f"Ошибка при удалении новости через callback: {e}")
-            self.bot.answer_callback_query(call.id, "Ошибка при удалении")
+            try:
+                self.bot.edit_message_text(
+                    f"❌ **Ошибка при удалении**\n\n{str(e)}",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    parse_mode='Markdown'
+                )
+            except:
+                pass  # Игнорируем ошибки редактирования сообщения
 
     def _execute_clear_queue(self, call):
         """Выполнить очистку очереди"""
         try:
             logger.info("Выполнение очистки очереди")
+
+            # ВАЖНО: Отвечаем на callback сразу, чтобы избежать timeout
+            self.bot.answer_callback_query(call.id, "⏳ Очищаю...")
 
             success = self.db.clear_queue()
 
@@ -1958,7 +1993,6 @@ class TelegramHandler:
                     message_id=call.message.message_id,
                     parse_mode='Markdown'
                 )
-                self.bot.answer_callback_query(call.id, "✅ Очередь очищена!")
             else:
                 self.bot.edit_message_text(
                     "❌ **Ошибка при очистке очереди**",
@@ -1966,11 +2000,18 @@ class TelegramHandler:
                     message_id=call.message.message_id,
                     parse_mode='Markdown'
                 )
-                self.bot.answer_callback_query(call.id, "❌ Ошибка")
 
         except Exception as e:
             logger.error(f"Ошибка при очистке очереди через callback: {e}")
-            self.bot.answer_callback_query(call.id, "Ошибка при очистке")
+            try:
+                self.bot.edit_message_text(
+                    f"❌ **Ошибка при очистке очереди**\n\n{str(e)}",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    parse_mode='Markdown'
+                )
+            except:
+                pass  # Игнорируем ошибки редактирования сообщения
 
     def _handle_cancel_callback(self, call, message: str):
         """Обработка отмены действия"""

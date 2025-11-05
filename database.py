@@ -86,7 +86,8 @@ class NewsDatabase:
                     status TEXT DEFAULT 'pending',
                     is_urgent BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    published_at TIMESTAMP
+                    published_at TIMESTAMP,
+                    updated_at TIMESTAMP
                 )
             ''')
 
@@ -405,9 +406,9 @@ class NewsDatabase:
                 cursor = conn.cursor()
                 cursor.execute('''
                     UPDATE news_queue
-                    SET processed_text = %s
+                    SET processed_text = %s, updated_at = %s
                     WHERE id = %s
-                ''', (new_processed_text, news_id))
+                ''', (new_processed_text, datetime.now(), news_id))
 
                 logger.info(f"Текст новости ID={news_id} обновлен (переписан)")
                 return True
@@ -514,6 +515,34 @@ class NewsDatabase:
         except Exception as e:
             logger.error(f"Ошибка при удалении старых статей: {e}")
             return 0
+
+    def migrate_add_updated_at(self):
+        """
+        Миграция: добавить колонку updated_at для существующих таблиц
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Проверяем, существует ли колонка updated_at
+                cursor.execute('''
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name='news_queue' AND column_name='updated_at'
+                ''')
+
+                if cursor.fetchone() is None:
+                    # Колонка не существует, добавляем её
+                    cursor.execute('''
+                        ALTER TABLE news_queue
+                        ADD COLUMN updated_at TIMESTAMP
+                    ''')
+                    logger.info("Миграция: колонка updated_at успешно добавлена в таблицу news_queue")
+                else:
+                    logger.info("Миграция: колонка updated_at уже существует")
+
+        except Exception as e:
+            logger.error(f"Ошибка при выполнении миграции: {e}")
 
     def close(self):
         """Закрыть все соединения в pool"""

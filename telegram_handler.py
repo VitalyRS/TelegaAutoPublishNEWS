@@ -886,10 +886,10 @@ class TelegramHandler:
                 self.bot.reply_to(message, "⚠️ Нет настроек в базе данных", parse_mode=None)
                 return
 
-            # Форматируем список настроек
-            config_text = "⚙️ **Настройки бота из базы данных:**\n\n"
+            # Форматируем список настроек (используем HTML для более надежного парсинга)
+            config_text = "⚙️ <b>Настройки бота из базы данных:</b>\n\n"
             for key, value in all_configs.items():
-                config_text += f"**{key}:** `{value}`\n"
+                config_text += f"<b>{key}:</b> <code>{value}</code>\n"
 
             config_text += "\nИспользуйте /set_config для изменения или выберите настройку из меню:"
 
@@ -916,7 +916,7 @@ class TelegramHandler:
                 )
             )
 
-            self.bot.reply_to(message, config_text, parse_mode='Markdown', reply_markup=keyboard)
+            self.bot.reply_to(message, config_text, parse_mode='HTML', reply_markup=keyboard)
 
         except Exception as e:
             logger.error(f"Ошибка в команде /config: {e}")
@@ -952,14 +952,33 @@ class TelegramHandler:
                     "- URGENT_KEYWORDS (например: молния,breaking)\n"
                     "- MAX_ARTICLES_PER_RUN (например: 5)\n"
                     "- ARTICLE_STYLE (например: informative)\n"
-                    "- CHECK_INTERVAL (например: 60)\n\n"
+                    "- TEXT_LENGTH (например: short, medium, long)\n"
+                    "- CHECK_INTERVAL (например: 60)\n"
+                    "- MONITOR_FROM_DATE (например: 2025-01-01 00:00:00)\n\n"
                     "Используйте /config для просмотра текущих настроек",
                     parse_mode=None
                 )
                 return
 
-            key = parts[1]
+            # Нормализуем ключ: убираем лидирующие дефисы и приводим к верхнему регистру
+            key = parts[1].lstrip('-').upper()
             value = parts[2]
+
+            # Список допустимых ключей конфигурации
+            valid_keys = [
+                'PUBLISH_SCHEDULE', 'URGENT_KEYWORDS', 'MAX_ARTICLES_PER_RUN',
+                'ARTICLE_STYLE', 'TEXT_LENGTH', 'CHECK_INTERVAL', 'MONITOR_FROM_DATE'
+            ]
+
+            # Проверяем, что ключ допустим
+            if key not in valid_keys:
+                self.bot.reply_to(
+                    message,
+                    f"❌ Недопустимый ключ: {key}\n\n"
+                    f"Допустимые ключи:\n" + "\n".join([f"- {k}" for k in valid_keys]),
+                    parse_mode=None
+                )
+                return
 
             # Обновляем настройку
             if Config.update_config(key, value):
@@ -975,10 +994,10 @@ class TelegramHandler:
 
                 self.bot.reply_to(
                     message,
-                    f"✅ Настройка обновлена:\n**{key}** = `{value}`\n\n"
+                    f"✅ Настройка обновлена:\n<b>{key}</b> = <code>{value}</code>\n\n"
                     f"⚠️ Некоторые изменения (например, PUBLISH_SCHEDULE) "
                     f"потребуют перезапуска бота для полного применения.",
-                    parse_mode='Markdown'
+                    parse_mode='HTML'
                 )
             else:
                 self.bot.reply_to(message, f"❌ Ошибка при обновлении настройки {key}")

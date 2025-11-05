@@ -1849,6 +1849,9 @@ class TelegramHandler:
         try:
             # Создаем объект message из callback
             message = call.message
+            # ВАЖНО: Заменяем from_user на реального пользователя, который нажал кнопку
+            # call.message.from_user - это бот, call.from_user - это реальный пользователь
+            message.from_user = call.from_user
             cmd_func(message)
             self.bot.answer_callback_query(call.id)
         except Exception as e:

@@ -1488,7 +1488,9 @@ class TelegramHandler:
             elif action == "confirm":
                 # Подтверждение переписывания
                 if len(data_parts) >= 4:
-                    param = data_parts[3]  # both, style_X, length_X
+                    # Собираем все части после "confirm" в param
+                    # Это даст "both" или "style_ironic" или "length_short"
+                    param = "_".join(data_parts[3:])
                     self._execute_rewrite(call, news_id, param)
             elif action == "setstyle":
                 # Установить стиль и показать меню подтверждения

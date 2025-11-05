@@ -43,8 +43,8 @@ def index():
 
 @app.route('/health')
 def health():
-    """Проверка здоровья"""
-    return {"status": "ok"}, 200
+    """Легкий health-check без логирования и внешних вызовов"""
+    return 'OK'
 
 
 @app.route(Config.WEBHOOK_PATH, methods=['POST'])

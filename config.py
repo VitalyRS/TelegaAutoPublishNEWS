@@ -51,6 +51,19 @@ class Config:
     # Доступные стили
     AVAILABLE_STYLES = ['informative', 'ironic', 'cynical', 'playful', 'mocking']
 
+    # Длина текста (short=1000, medium=2000, long=3000)
+    TEXT_LENGTH = os.getenv('TEXT_LENGTH', 'medium')
+
+    # Доступные варианты длины
+    AVAILABLE_TEXT_LENGTHS = {
+        'short': 1000,
+        'medium': 2000,
+        'long': 3000
+    }
+
+    # Дата начала мониторинга канала (формат: YYYY-MM-DD HH:MM:SS)
+    MONITOR_FROM_DATE = os.getenv('MONITOR_FROM_DATE', '')
+
     # PostgreSQL Database (Aiven or other)
     # Опция 1: Полный DATABASE_URL (рекомендуется для Aiven)
     DATABASE_URL = os.getenv('DATABASE_URL')
@@ -78,6 +91,8 @@ class Config:
         cls.PUBLISH_SCHEDULE = db.get_config('PUBLISH_SCHEDULE', cls.PUBLISH_SCHEDULE)
         cls.URGENT_KEYWORDS = db.get_config('URGENT_KEYWORDS', cls.URGENT_KEYWORDS)
         cls.ARTICLE_STYLE = db.get_config('ARTICLE_STYLE', cls.ARTICLE_STYLE)
+        cls.TEXT_LENGTH = db.get_config('TEXT_LENGTH', cls.TEXT_LENGTH)
+        cls.MONITOR_FROM_DATE = db.get_config('MONITOR_FROM_DATE', cls.MONITOR_FROM_DATE)
 
         max_articles = db.get_config('MAX_ARTICLES_PER_RUN', str(cls.MAX_ARTICLES_PER_RUN))
         cls.MAX_ARTICLES_PER_RUN = int(max_articles)
@@ -115,6 +130,10 @@ class Config:
                 cls.URGENT_KEYWORDS = value
             elif key == 'ARTICLE_STYLE':
                 cls.ARTICLE_STYLE = value
+            elif key == 'TEXT_LENGTH':
+                cls.TEXT_LENGTH = value
+            elif key == 'MONITOR_FROM_DATE':
+                cls.MONITOR_FROM_DATE = value
             elif key == 'MAX_ARTICLES_PER_RUN':
                 cls.MAX_ARTICLES_PER_RUN = int(value)
             elif key == 'CHECK_INTERVAL':
@@ -137,6 +156,23 @@ class Config:
         """Получить текущий стиль написания статей"""
         style = cls.ARTICLE_STYLE.lower()
         return style if style in cls.AVAILABLE_STYLES else 'informative'
+
+    @classmethod
+    def get_text_length(cls) -> str:
+        """Получить текущую настройку длины текста"""
+        length = cls.TEXT_LENGTH.lower()
+        return length if length in cls.AVAILABLE_TEXT_LENGTHS else 'medium'
+
+    @classmethod
+    def get_text_length_chars(cls) -> int:
+        """Получить длину текста в символах"""
+        length_type = cls.get_text_length()
+        return cls.AVAILABLE_TEXT_LENGTHS.get(length_type, 2000)
+
+    @classmethod
+    def get_monitor_from_date(cls) -> str:
+        """Получить дату начала мониторинга"""
+        return cls.MONITOR_FROM_DATE
 
     @staticmethod
     def validate():

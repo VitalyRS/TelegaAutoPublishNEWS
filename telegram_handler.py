@@ -1469,15 +1469,21 @@ class TelegramHandler:
     def _handle_rewrite_callback(self, call):
         """Обработчик callback для переписывания статьи"""
         try:
+            user_id = call.from_user.id
+            username = call.from_user.username or "без username"
+
             data_parts = call.data.split("_")
 
             # Формат: rewrite_{news_id}_{action}[_{params}...]
             if len(data_parts) < 3:
+                logger.warning(f"Неверный формат callback данных от пользователя {user_id} (@{username}): {call.data}")
                 self.bot.answer_callback_query(call.id, "Ошибка: неверный формат данных")
                 return
 
             news_id = int(data_parts[1])
             action = "_".join(data_parts[2:])  # Собираем все остальное в action
+
+            logger.info(f"Пользователь {user_id} (@{username}) запросил rewrite для статьи {news_id}, действие: {action}")
 
             # Обработка разных типов действий
             if action == "select_style_only":
@@ -1501,6 +1507,9 @@ class TelegramHandler:
             elif action.startswith("confirm_"):
                 # Подтверждение переписывания
                 self._handle_rewrite_confirm(call, news_id, action)
+            else:
+                logger.warning(f"Неизвестное действие rewrite от пользователя {user_id} (@{username}): {action}")
+                self.bot.answer_callback_query(call.id, "Неизвестное действие")
 
         except Exception as e:
             logger.error(f"Ошибка в обработчике callback переписывания: {e}")
@@ -1599,14 +1608,20 @@ class TelegramHandler:
 
     def _handle_style_selected(self, call, news_id: int, action: str):
         """Обработка выбора стиля"""
+        user_id = call.from_user.id
+        username = call.from_user.username or "без username"
+
         # Парсим action: style_{style_name}_{mode}
         parts = action.split("_")
         if len(parts) < 3:
+            logger.warning(f"Неверный формат action для выбора стиля от пользователя {user_id} (@{username}): {action}")
             self.bot.answer_callback_query(call.id, "Ошибка формата")
             return
 
         style_name = parts[1]  # Например: "ironic"
         mode = "_".join(parts[2:])  # Например: "style_only" или "both"
+
+        logger.info(f"Пользователь {user_id} (@{username}) выбрал стиль '{style_name}' для статьи {news_id}, режим: {mode}")
 
         if mode == "style_only":
             # Только стиль - показываем подтверждение
@@ -1614,29 +1629,43 @@ class TelegramHandler:
         elif mode == "both":
             # Стиль и длина - переходим к выбору длины
             self._show_rewrite_length_menu(call, news_id, mode="both", selected_style=style_name)
+        else:
+            logger.warning(f"Неизвестный режим выбора стиля от пользователя {user_id} (@{username}): {mode}")
+            self.bot.answer_callback_query(call.id, f"Неизвестный режим: {mode}")
 
     def _handle_length_selected(self, call, news_id: int, action: str):
         """Обработка выбора длины"""
+        user_id = call.from_user.id
+        username = call.from_user.username or "без username"
+
         # Парсим action: length_{length_name}_{mode} или length_{length_name}_with_style_{style_name}
         parts = action.split("_")
         if len(parts) < 3:
+            logger.warning(f"Неверный формат action для выбора длины от пользователя {user_id} (@{username}): {action}")
             self.bot.answer_callback_query(call.id, "Ошибка формата")
             return
 
         length_name = parts[1]  # Например: "short"
 
         # Проверяем, есть ли уже выбранный стиль
-        if "with_style" in action:
+        if "with" in action and "style" in action:
             # Формат: length_{length}_with_style_{style}
-            style_idx = parts.index("style") + 1 if "style" in parts else None
-            if style_idx and style_idx < len(parts):
-                style_name = parts[style_idx]
-                # Оба параметра выбраны - показываем подтверждение
-                self._show_rewrite_confirmation(call, news_id, new_style=style_name, new_length=length_name)
-            else:
+            try:
+                style_idx = parts.index("style") + 1
+                if style_idx < len(parts):
+                    style_name = parts[style_idx]
+                    logger.info(f"Пользователь {user_id} (@{username}) выбрал длину '{length_name}' и стиль '{style_name}' для статьи {news_id}")
+                    # Оба параметра выбраны - показываем подтверждение
+                    self._show_rewrite_confirmation(call, news_id, new_style=style_name, new_length=length_name)
+                else:
+                    logger.error(f"Стиль не найден в action от пользователя {user_id} (@{username}): {action}")
+                    self.bot.answer_callback_query(call.id, "Ошибка: стиль не найден")
+            except ValueError:
+                logger.error(f"Ошибка парсинга стиля из action от пользователя {user_id} (@{username}): {action}")
                 self.bot.answer_callback_query(call.id, "Ошибка: стиль не найден")
         else:
             # Только длина - показываем подтверждение
+            logger.info(f"Пользователь {user_id} (@{username}) выбрал длину '{length_name}' для статьи {news_id}")
             self._show_rewrite_confirmation(call, news_id, new_style=None, new_length=length_name)
 
     def _show_rewrite_confirmation(self, call, news_id: int, new_style: str = None, new_length: str = None):
@@ -1721,12 +1750,16 @@ class TelegramHandler:
             new_length: Новая длина (или None для текущей)
         """
         try:
+            user_id = call.from_user.id
+            username = call.from_user.username or "без username"
+
             # ВАЖНО: Отвечаем на callback сразу, чтобы избежать timeout
             self.bot.answer_callback_query(call.id, "⏳ Начинаю переписывание...")
 
             # Получаем статью из БД
             news = self.db.get_news_by_id(news_id)
             if not news:
+                logger.warning(f"Пользователь {user_id} (@{username}) запросил переписывание несуществующей статьи {news_id}")
                 self.bot.edit_message_text(
                     f"❌ Статья {news_id} не найдена",
                     chat_id=call.message.chat.id,
@@ -1737,6 +1770,8 @@ class TelegramHandler:
             # Используем текущие настройки, если новые не указаны
             style_to_use = new_style or self.deepseek.get_style()
             length_to_use = new_length or Config.get_text_length()
+
+            logger.info(f"Пользователь {user_id} (@{username}) начал переписывание статьи {news_id}: стиль='{style_to_use}', длина='{length_to_use}'")
 
             # Показываем сообщение о начале переписывания
             self.bot.edit_message_text(
@@ -1768,6 +1803,7 @@ class TelegramHandler:
 
                 if success:
                     chars = Config.AVAILABLE_TEXT_LENGTHS.get(length_to_use, Config.get_text_length_chars())
+                    logger.info(f"✅ Пользователь {user_id} (@{username}) успешно переписал статью {news_id} (стиль: {style_to_use}, длина: {length_to_use})")
                     self.bot.edit_message_text(
                         f"✅ **Статья ID {news_id} успешно переписана!**\n\n"
                         f"Стиль: {style_to_use}\n"
@@ -1778,6 +1814,7 @@ class TelegramHandler:
                         parse_mode='Markdown'
                     )
                 else:
+                    logger.error(f"❌ Ошибка при сохранении переписанной статьи {news_id} в БД для пользователя {user_id} (@{username})")
                     self.bot.edit_message_text(
                         f"❌ Ошибка при сохранении переписанной статьи в БД",
                         chat_id=call.message.chat.id,
@@ -1785,6 +1822,7 @@ class TelegramHandler:
                         parse_mode='Markdown'
                     )
             else:
+                logger.error(f"❌ DeepSeek API не вернул текст при переписывании статьи {news_id} для пользователя {user_id} (@{username})")
                 self.bot.edit_message_text(
                     f"❌ Ошибка при переписывании статьи через DeepSeek API",
                     chat_id=call.message.chat.id,
@@ -1793,7 +1831,7 @@ class TelegramHandler:
                 )
 
         except Exception as e:
-            logger.error(f"Ошибка при выполнении переписывания: {e}")
+            logger.error(f"Ошибка при выполнении переписывания статьи {news_id} для пользователя {user_id} (@{username}): {e}")
             try:
                 self.bot.edit_message_text(
                     f"❌ **Ошибка при переписывании**\n\n{str(e)}",

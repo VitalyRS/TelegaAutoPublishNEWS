@@ -7,6 +7,7 @@ from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from config import Config
+from database import NewsDatabase
 from telegram_handler import TelegramHandler
 
 # Настройка логирования
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 # Flask приложение
 app = Flask(__name__)
+
+# База данных
+database = None
 
 # Telegram обработчик
 telegram_handler = None
@@ -55,8 +59,22 @@ def publish_news_job():
         logger.error(f"Ошибка в задаче публикации: {e}")
 
 
+def cleanup_old_news_job():
+    """
+    Задача для очистки старых опубликованных статей
+    Удаляет статьи старше 7 дней
+    Вызывается APScheduler
+    """
+    try:
+        if database:
+            deleted_count = database.delete_old_published_news(days=7)
+            logger.info(f"Автоматическая очистка БД: удалено {deleted_count} старых статей")
+    except Exception as e:
+        logger.error(f"Ошибка в задаче очистки БД: {e}")
+
+
 def setup_scheduler():
-    """Настройка планировщика публикаций"""
+    """Настройка планировщика публикаций и обслуживания"""
     global scheduler
 
     scheduler = BackgroundScheduler()
@@ -77,20 +95,42 @@ def setup_scheduler():
         )
         logger.info(f"Добавлена задача публикации на {hour}:00")
 
+    # Добавляем задачу очистки старых статей (запуск каждый день в 3:00)
+    cleanup_trigger = CronTrigger(hour=3, minute=0)
+    scheduler.add_job(
+        cleanup_old_news_job,
+        trigger=cleanup_trigger,
+        id='cleanup_old_news',
+        name='Очистка старых опубликованных статей',
+        replace_existing=True
+    )
+    logger.info("Добавлена задача очистки старых статей на 3:00 каждый день")
+
     scheduler.start()
     logger.info("Планировщик запущен")
 
 
 def start_bot():
     """Запуск Telegram бота"""
-    global telegram_handler
+    global telegram_handler, database
 
     try:
         # Валидация конфигурации
         Config.validate()
 
-        # Создание обработчика
-        telegram_handler = TelegramHandler()
+        # Инициализация базы данных
+        database = NewsDatabase()
+        logger.info("База данных инициализирована")
+
+        # Загрузка настроек из БД (приоритет над .env)
+        Config.init_from_database(database)
+        logger.info("Настройки загружены из базы данных")
+        logger.info(f"Текущие настройки: PUBLISH_SCHEDULE={Config.PUBLISH_SCHEDULE}, "
+                   f"ARTICLE_STYLE={Config.ARTICLE_STYLE}, "
+                   f"URGENT_KEYWORDS={Config.URGENT_KEYWORDS}")
+
+        # Создание обработчика с передачей database
+        telegram_handler = TelegramHandler(database=database)
 
         # Запуск бота (блокирующий вызов)
         logger.info("Telegram бот запущен и ожидает сообщений")

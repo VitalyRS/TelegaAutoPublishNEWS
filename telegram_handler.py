@@ -375,14 +375,27 @@ class TelegramHandler:
     def _cmd_start(self, message: types.Message):
         """Команда /start"""
         start_time_str = self.bot_start_time.strftime('%Y-%m-%d %H:%M:%S UTC')
+
+        # Создаем inline клавиатуру с кнопками быстрого доступа
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status"),
+            types.InlineKeyboardButton("📋 Очередь", callback_data="cmd_queue")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("⚙️ Настройки", callback_data="cmd_settings"),
+            types.InlineKeyboardButton("❓ Помощь", callback_data="cmd_help")
+        )
+
         self.bot.reply_to(
             message,
             "Бот автоматической публикации новостей запущен!\n\n"
             f"🕐 Время запуска: {start_time_str}\n"
             f"📡 Мониторинг канала: активен (только новые сообщения)\n\n"
             f"{self.scheduler.format_schedule()}\n\n"
-            "Используйте /help для списка команд.",
-            parse_mode=None
+            "Используйте кнопки ниже для быстрого доступа:",
+            parse_mode=None,
+            reply_markup=keyboard
         )
 
     def _cmd_help(self, message: types.Message):
@@ -413,8 +426,22 @@ class TelegramHandler:
 Доступные стили: {available_styles}
 Доступные длины: short (1000), medium (2000), long (3000)
 """
+        # Создаем inline клавиатуру с кнопками быстрого доступа
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.add(
+            types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status"),
+            types.InlineKeyboardButton("📋 Очередь", callback_data="cmd_queue")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("⚙️ Настройки", callback_data="cmd_settings"),
+            types.InlineKeyboardButton("📝 Стили", callback_data="cmd_get_style")
+        )
+        keyboard.add(
+            types.InlineKeyboardButton("🔧 Конфиг", callback_data="cmd_config")
+        )
+
         # Отправляем без HTML парсинга, так как это обычный текст
-        self.bot.reply_to(message, help_text, parse_mode=None)
+        self.bot.reply_to(message, help_text, parse_mode=None, reply_markup=keyboard)
 
     def _cmd_status(self, message: types.Message):
         """Команда /status"""
@@ -441,7 +468,18 @@ class TelegramHandler:
                     urgent_mark = "🔥 " if news['is_urgent'] else ""
                     status_text += f"{urgent_mark}{news['id']}. {news['title'][:50]}... ({news['scheduled_time']})\n"
 
-            self.bot.reply_to(message, status_text, parse_mode=None)
+            # Создаем inline клавиатуру
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+            keyboard.add(
+                types.InlineKeyboardButton("📋 Очередь", callback_data="cmd_queue"),
+                types.InlineKeyboardButton("🔄 Обновить", callback_data="cmd_status")
+            )
+            keyboard.add(
+                types.InlineKeyboardButton("⚙️ Настройки", callback_data="cmd_settings"),
+                types.InlineKeyboardButton("🔧 Конфиг", callback_data="cmd_config")
+            )
+
+            self.bot.reply_to(message, status_text, parse_mode=None, reply_markup=keyboard)
 
         except Exception as e:
             logger.error(f"Ошибка в команде /status: {e}")
@@ -453,10 +491,18 @@ class TelegramHandler:
             news_list = self.db.get_pending_news()
 
             if not news_list:
-                self.bot.reply_to(message, "Очередь пуста")
+                keyboard = types.InlineKeyboardMarkup(row_width=1)
+                keyboard.add(
+                    types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status")
+                )
+                self.bot.reply_to(message, "Очередь пуста", reply_markup=keyboard)
                 return
 
             queue_text = f"📋 Новости в очереди ({len(news_list)}):\n\n"
+
+            # Создаем inline клавиатуру для просмотра первых статей
+            keyboard = types.InlineKeyboardMarkup(row_width=3)
+            buttons = []
 
             for news in news_list[:20]:  # Показываем максимум 20
                 urgent_mark = "🔥 " if news['is_urgent'] else ""
@@ -464,10 +510,29 @@ class TelegramHandler:
                 queue_text += f"   ⏰ {news['scheduled_time']}\n"
                 queue_text += f"   🔗 {news['url'][:50]}...\n\n"
 
+                # Добавляем кнопки для первых 9 статей
+                if len(buttons) < 9:
+                    buttons.append(
+                        types.InlineKeyboardButton(
+                            f"👁 {news['id']}",
+                            callback_data=f"view_{news['id']}"
+                        )
+                    )
+
             if len(news_list) > 20:
                 queue_text += f"\n... и еще {len(news_list) - 20} новостей"
 
-            self.bot.reply_to(message, queue_text, parse_mode=None)
+            # Добавляем кнопки просмотра (по 3 в ряд)
+            for i in range(0, len(buttons), 3):
+                keyboard.row(*buttons[i:i+3])
+
+            # Добавляем кнопки управления
+            keyboard.add(
+                types.InlineKeyboardButton("🔄 Обновить", callback_data="cmd_queue"),
+                types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status")
+            )
+
+            self.bot.reply_to(message, queue_text, parse_mode=None, reply_markup=keyboard)
 
         except Exception as e:
             logger.error(f"Ошибка в команде /queue: {e}")
@@ -537,12 +602,29 @@ class TelegramHandler:
             else:
                 logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
 
-            success = self.db.clear_queue()
+            # Получаем количество новостей в очереди
+            stats = self.db.get_queue_status()
+            pending_count = stats.get('pending', 0)
 
-            if success:
-                self.bot.reply_to(message, "✅ Очередь очищена")
-            else:
-                self.bot.reply_to(message, "❌ Ошибка при очистке очереди")
+            if pending_count == 0:
+                self.bot.reply_to(message, "Очередь уже пуста")
+                return
+
+            # Создаем inline клавиатуру с подтверждением
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+            keyboard.add(
+                types.InlineKeyboardButton("✅ Да, очистить", callback_data="confirm_clear_queue"),
+                types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_clear_queue")
+            )
+
+            self.bot.reply_to(
+                message,
+                f"⚠️ Вы уверены, что хотите очистить очередь?\n\n"
+                f"Будет удалено новостей: {pending_count}\n\n"
+                f"Это действие необратимо!",
+                parse_mode=None,
+                reply_markup=keyboard
+            )
 
         except Exception as e:
             logger.error(f"Ошибка в команде /clear_queue: {e}")
@@ -612,14 +694,33 @@ class TelegramHandler:
         """Команда /get_style или /getstyle"""
         try:
             current_style = self.deepseek.get_style()
-            available_styles = '\n'.join([f"- {style}" for style in Config.AVAILABLE_STYLES])
+
+            # Создаем inline клавиатуру с выбором стилей
+            keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+            style_names = {
+                'informative': '📰 Информативный',
+                'ironic': '😏 Ироничный',
+                'cynical': '😒 Циничный',
+                'playful': '😄 Шутливый',
+                'mocking': '🤣 Стебной'
+            }
+
+            for style_key, style_name in style_names.items():
+                checkmark = " ✓" if style_key == current_style else ""
+                keyboard.add(
+                    types.InlineKeyboardButton(
+                        f"{style_name}{checkmark}",
+                        callback_data=f"style_{style_key}"
+                    )
+                )
 
             self.bot.reply_to(
                 message,
-                f"📝 Текущий стиль написания: {current_style}\n\n"
-                f"Доступные стили:\n{available_styles}\n\n"
-                f"Чтобы изменить стиль, используйте: /set_style [style]",
-                parse_mode=None
+                f"📝 Текущий стиль написания: **{current_style}**\n\n"
+                f"Выберите стиль из списка ниже:",
+                parse_mode='Markdown',
+                reply_markup=keyboard
             )
 
         except Exception as e:
@@ -659,12 +760,31 @@ class TelegramHandler:
 
             info_text = f"ID: {news_id}\n{status_text}{scheduled_text}\n{'='*30}\n\n"
 
+            # Создаем inline клавиатуру с действиями (только для админа)
+            user_id = str(message.from_user.id)
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+
+            # Проверяем права администратора для кнопок действий
+            if Config.ADMIN_USER_ID and user_id == Config.ADMIN_USER_ID:
+                if status == 'pending':
+                    keyboard.add(
+                        types.InlineKeyboardButton("🚀 Опубликовать", callback_data=f"publish_{news_id}"),
+                        types.InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{news_id}")
+                    )
+
+            # Кнопки навигации доступны всем
+            keyboard.add(
+                types.InlineKeyboardButton("📋 Очередь", callback_data="cmd_queue"),
+                types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status")
+            )
+
             # Отправляем превью публикации
             self.bot.reply_to(
                 message,
                 info_text + final_text,
                 parse_mode='HTML',
-                disable_web_page_preview=False
+                disable_web_page_preview=False,
+                reply_markup=keyboard
             )
 
         except ValueError:
@@ -704,9 +824,20 @@ class TelegramHandler:
             for key, value in all_configs.items():
                 config_text += f"**{key}:** `{value}`\n"
 
-            config_text += "\nИспользуйте /set_config для изменения настроек"
+            config_text += "\nВыберите настройку для изменения или используйте кнопки быстрого доступа:"
 
-            self.bot.reply_to(message, config_text, parse_mode='Markdown')
+            # Создаем inline клавиатуру с быстрым доступом к настройкам
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+            keyboard.add(
+                types.InlineKeyboardButton("📝 Стиль", callback_data="settings_style"),
+                types.InlineKeyboardButton("📏 Длина", callback_data="settings_length")
+            )
+            keyboard.add(
+                types.InlineKeyboardButton("🔄 Перезагрузить", callback_data="reload_config"),
+                types.InlineKeyboardButton("⚙️ Настройки", callback_data="cmd_settings")
+            )
+
+            self.bot.reply_to(message, config_text, parse_mode='Markdown', reply_markup=keyboard)
 
         except Exception as e:
             logger.error(f"Ошибка в команде /config: {e}")
@@ -891,17 +1022,30 @@ class TelegramHandler:
         try:
             user_id = str(call.from_user.id)
 
-            # Проверка прав администратора
-            if Config.ADMIN_USER_ID:
-                if user_id != Config.ADMIN_USER_ID:
-                    self.bot.answer_callback_query(
-                        call.id,
-                        "❌ У вас нет прав для изменения настроек"
-                    )
-                    return
-
-            # Обработка разных типов callback
-            if call.data == "settings_style":
+            # Команды, доступные всем пользователям
+            if call.data == "cmd_status":
+                self._handle_cmd_status_callback(call)
+            elif call.data == "cmd_queue":
+                self._handle_cmd_queue_callback(call)
+            elif call.data == "cmd_help":
+                self._handle_cmd_help_callback(call)
+            elif call.data == "cmd_get_style":
+                self._handle_cmd_get_style_callback(call)
+            elif call.data.startswith("view_"):
+                self._handle_view_callback(call)
+            # Команды и действия, требующие прав администратора
+            elif Config.ADMIN_USER_ID and user_id != Config.ADMIN_USER_ID:
+                self.bot.answer_callback_query(
+                    call.id,
+                    "❌ У вас нет прав для выполнения этого действия"
+                )
+                return
+            # Обработка остальных callback (требуют права админа)
+            elif call.data == "cmd_settings":
+                self._show_settings_menu(call)
+            elif call.data == "cmd_config":
+                self._handle_cmd_config_callback(call)
+            elif call.data == "settings_style":
                 self._show_style_keyboard(call)
             elif call.data == "settings_length":
                 self._show_length_keyboard(call)
@@ -913,6 +1057,16 @@ class TelegramHandler:
                 self._set_length_from_callback(call)
             elif call.data == "back_to_settings":
                 self._show_settings_menu(call)
+            elif call.data.startswith("publish_"):
+                self._handle_publish_callback(call)
+            elif call.data.startswith("delete_"):
+                self._handle_delete_callback(call)
+            elif call.data == "confirm_clear_queue":
+                self._handle_confirm_clear_queue(call)
+            elif call.data == "cancel_clear_queue":
+                self._handle_cancel_clear_queue(call)
+            elif call.data == "reload_config":
+                self._handle_reload_config_callback(call)
 
         except Exception as e:
             logger.error(f"Ошибка в обработчике callback: {e}")
@@ -1113,6 +1267,396 @@ class TelegramHandler:
         )
 
         self.bot.answer_callback_query(call.id)
+
+    def _handle_cmd_status_callback(self, call):
+        """Обработчик кнопки статуса"""
+        try:
+            stats = self.db.get_queue_status()
+
+            status_text = f"""
+📊 Статус очереди новостей:
+
+Всего новостей: {stats.get('total', 0)}
+⏳ В ожидании: {stats.get('pending', 0)}
+✅ Опубликовано: {stats.get('published', 0)}
+❌ Ошибки: {stats.get('failed', 0)}
+🔥 Срочные: {stats.get('urgent', 0)}
+
+{self.scheduler.format_schedule()}
+
+Следующая публикация: {self.scheduler.get_next_publication_time().strftime('%Y-%m-%d %H:%M')}
+"""
+
+            if stats.get('next_news'):
+                status_text += "\n\n📰 Следующие новости:\n"
+                for news in stats['next_news']:
+                    urgent_mark = "🔥 " if news['is_urgent'] else ""
+                    status_text += f"{urgent_mark}{news['id']}. {news['title'][:50]}... ({news['scheduled_time']})\n"
+
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+            keyboard.add(
+                types.InlineKeyboardButton("📋 Очередь", callback_data="cmd_queue"),
+                types.InlineKeyboardButton("🔄 Обновить", callback_data="cmd_status")
+            )
+            keyboard.add(
+                types.InlineKeyboardButton("⚙️ Настройки", callback_data="cmd_settings"),
+                types.InlineKeyboardButton("🔧 Конфиг", callback_data="cmd_config")
+            )
+
+            self.bot.edit_message_text(
+                status_text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode=None,
+                reply_markup=keyboard
+            )
+            self.bot.answer_callback_query(call.id, "✅ Статус обновлен")
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_cmd_status_callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при получении статуса")
+
+    def _handle_cmd_queue_callback(self, call):
+        """Обработчик кнопки очереди"""
+        try:
+            news_list = self.db.get_pending_news()
+
+            if not news_list:
+                keyboard = types.InlineKeyboardMarkup(row_width=1)
+                keyboard.add(
+                    types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status")
+                )
+                self.bot.edit_message_text(
+                    "Очередь пуста",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    reply_markup=keyboard
+                )
+                self.bot.answer_callback_query(call.id)
+                return
+
+            queue_text = f"📋 Новости в очереди ({len(news_list)}):\n\n"
+
+            keyboard = types.InlineKeyboardMarkup(row_width=3)
+            buttons = []
+
+            for news in news_list[:20]:
+                urgent_mark = "🔥 " if news['is_urgent'] else ""
+                queue_text += f"{urgent_mark}ID {news['id']}: {news['title'][:60]}...\n"
+                queue_text += f"   ⏰ {news['scheduled_time']}\n"
+                queue_text += f"   🔗 {news['url'][:50]}...\n\n"
+
+                if len(buttons) < 9:
+                    buttons.append(
+                        types.InlineKeyboardButton(
+                            f"👁 {news['id']}",
+                            callback_data=f"view_{news['id']}"
+                        )
+                    )
+
+            if len(news_list) > 20:
+                queue_text += f"\n... и еще {len(news_list) - 20} новостей"
+
+            for i in range(0, len(buttons), 3):
+                keyboard.row(*buttons[i:i+3])
+
+            keyboard.add(
+                types.InlineKeyboardButton("🔄 Обновить", callback_data="cmd_queue"),
+                types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status")
+            )
+
+            self.bot.edit_message_text(
+                queue_text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode=None,
+                reply_markup=keyboard
+            )
+            self.bot.answer_callback_query(call.id, "✅ Очередь обновлена")
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_cmd_queue_callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при получении очереди")
+
+    def _handle_cmd_help_callback(self, call):
+        """Обработчик кнопки помощи"""
+        try:
+            available_styles = ', '.join(Config.AVAILABLE_STYLES)
+            help_text = f"""
+Доступные команды:
+
+📋 Основные:
+/start - Информация о боте
+/status - Статус очереди новостей
+/queue - Показать новости в очереди
+/help - Это сообщение
+
+⚙️ Настройки (админ):
+/settings - Интерактивное меню настроек (кнопки)
+/set_style [style] - Изменить стиль написания
+/get_style - Показать текущий стиль
+/config - Показать все настройки
+/set_config [key] [value] - Изменить настройку
+/reload_config - Перезагрузить настройки
+
+📰 Публикации (админ):
+/view [id] - Просмотр публикации по ID
+/publishnow [id] - Опубликовать немедленно
+/clear_queue - Очистить очередь
+
+Доступные стили: {available_styles}
+Доступные длины: short (1000), medium (2000), long (3000)
+"""
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+            keyboard.add(
+                types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status"),
+                types.InlineKeyboardButton("📋 Очередь", callback_data="cmd_queue")
+            )
+            keyboard.add(
+                types.InlineKeyboardButton("⚙️ Настройки", callback_data="cmd_settings"),
+                types.InlineKeyboardButton("📝 Стили", callback_data="cmd_get_style")
+            )
+            keyboard.add(
+                types.InlineKeyboardButton("🔧 Конфиг", callback_data="cmd_config")
+            )
+
+            self.bot.edit_message_text(
+                help_text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode=None,
+                reply_markup=keyboard
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_cmd_help_callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при отображении помощи")
+
+    def _handle_cmd_get_style_callback(self, call):
+        """Обработчик кнопки выбора стиля"""
+        try:
+            current_style = self.deepseek.get_style()
+
+            keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+            style_names = {
+                'informative': '📰 Информативный',
+                'ironic': '😏 Ироничный',
+                'cynical': '😒 Циничный',
+                'playful': '😄 Шутливый',
+                'mocking': '🤣 Стебной'
+            }
+
+            for style_key, style_name in style_names.items():
+                checkmark = " ✓" if style_key == current_style else ""
+                keyboard.add(
+                    types.InlineKeyboardButton(
+                        f"{style_name}{checkmark}",
+                        callback_data=f"style_{style_key}"
+                    )
+                )
+
+            self.bot.edit_message_text(
+                f"📝 Текущий стиль написания: **{current_style}**\n\n"
+                f"Выберите стиль из списка ниже:",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode='Markdown',
+                reply_markup=keyboard
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_cmd_get_style_callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при отображении стилей")
+
+    def _handle_cmd_config_callback(self, call):
+        """Обработчик кнопки конфигурации"""
+        try:
+            all_configs = self.db.get_all_config()
+
+            if not all_configs:
+                self.bot.answer_callback_query(call.id, "⚠️ Нет настроек в базе данных")
+                return
+
+            config_text = "⚙️ **Настройки бота из базы данных:**\n\n"
+            for key, value in all_configs.items():
+                config_text += f"**{key}:** `{value}`\n"
+
+            config_text += "\nВыберите настройку для изменения или используйте кнопки быстрого доступа:"
+
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+            keyboard.add(
+                types.InlineKeyboardButton("📝 Стиль", callback_data="settings_style"),
+                types.InlineKeyboardButton("📏 Длина", callback_data="settings_length")
+            )
+            keyboard.add(
+                types.InlineKeyboardButton("🔄 Перезагрузить", callback_data="reload_config"),
+                types.InlineKeyboardButton("⚙️ Настройки", callback_data="cmd_settings")
+            )
+
+            self.bot.edit_message_text(
+                config_text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode='Markdown',
+                reply_markup=keyboard
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_cmd_config_callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при отображении конфигурации")
+
+    def _handle_view_callback(self, call):
+        """Обработчик кнопки просмотра статьи"""
+        try:
+            news_id = int(call.data.replace("view_", ""))
+            news = self.db.get_news_by_id(news_id)
+
+            if not news:
+                self.bot.answer_callback_query(call.id, f"❌ Публикация с ID {news_id} не найдена")
+                return
+
+            final_text = self._format_for_telegram_from_db(news)
+
+            status_emoji = {
+                'pending': '⏳',
+                'published': '✅',
+                'failed': '❌'
+            }
+            status = news.get('status', 'unknown')
+            status_text = f"{status_emoji.get(status, '❓')} Статус: {status}\n"
+            scheduled_text = f"⏰ Запланировано: {news.get('scheduled_time', 'не указано')}\n"
+
+            info_text = f"ID: {news_id}\n{status_text}{scheduled_text}\n{'='*30}\n\n"
+
+            user_id = str(call.from_user.id)
+            keyboard = types.InlineKeyboardMarkup(row_width=2)
+
+            if Config.ADMIN_USER_ID and user_id == Config.ADMIN_USER_ID:
+                if status == 'pending':
+                    keyboard.add(
+                        types.InlineKeyboardButton("🚀 Опубликовать", callback_data=f"publish_{news_id}"),
+                        types.InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{news_id}")
+                    )
+
+            keyboard.add(
+                types.InlineKeyboardButton("📋 Очередь", callback_data="cmd_queue"),
+                types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status")
+            )
+
+            self.bot.edit_message_text(
+                info_text + final_text,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode='HTML',
+                disable_web_page_preview=False,
+                reply_markup=keyboard
+            )
+            self.bot.answer_callback_query(call.id)
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_view_callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при просмотре статьи")
+
+    def _handle_publish_callback(self, call):
+        """Обработчик кнопки публикации"""
+        try:
+            news_id = int(call.data.replace("publish_", ""))
+
+            self.bot.answer_callback_query(call.id, f"Публикую новость ID {news_id}...")
+
+            success = self.publish_news_by_id(news_id)
+
+            if success:
+                self.bot.edit_message_text(
+                    f"✅ Новость ID {news_id} успешно опубликована!",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id
+                )
+            else:
+                self.bot.edit_message_text(
+                    f"❌ Ошибка при публикации новости ID {news_id}",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id
+                )
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_publish_callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при публикации")
+
+    def _handle_delete_callback(self, call):
+        """Обработчик кнопки удаления"""
+        try:
+            news_id = int(call.data.replace("delete_", ""))
+
+            # Удаляем новость (помечаем как failed)
+            self.db.mark_as_failed(news_id)
+
+            self.bot.edit_message_text(
+                f"🗑 Новость ID {news_id} удалена из очереди",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id
+            )
+            self.bot.answer_callback_query(call.id, "✅ Удалено")
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_delete_callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при удалении")
+
+    def _handle_confirm_clear_queue(self, call):
+        """Обработчик подтверждения очистки очереди"""
+        try:
+            success = self.db.clear_queue()
+
+            if success:
+                self.bot.edit_message_text(
+                    "✅ Очередь очищена",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id
+                )
+                self.bot.answer_callback_query(call.id, "✅ Очередь очищена")
+            else:
+                self.bot.edit_message_text(
+                    "❌ Ошибка при очистке очереди",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id
+                )
+                self.bot.answer_callback_query(call.id, "❌ Ошибка")
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_confirm_clear_queue: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при очистке")
+
+    def _handle_cancel_clear_queue(self, call):
+        """Обработчик отмены очистки очереди"""
+        try:
+            self.bot.edit_message_text(
+                "❌ Очистка очереди отменена",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id
+            )
+            self.bot.answer_callback_query(call.id, "Отменено")
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_cancel_clear_queue: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка")
+
+    def _handle_reload_config_callback(self, call):
+        """Обработчик кнопки перезагрузки конфигурации"""
+        try:
+            Config.reload_from_database()
+            self.deepseek.set_style(Config.get_article_style())
+            self.urgent_keywords = Config.get_urgent_keywords()
+
+            self.bot.edit_message_text(
+                f"✅ Настройки перезагружены из базы данных\n\n"
+                f"Текущие настройки:\n"
+                f"- PUBLISH_SCHEDULE: `{Config.PUBLISH_SCHEDULE}`\n"
+                f"- ARTICLE_STYLE: `{Config.ARTICLE_STYLE}`\n"
+                f"- URGENT_KEYWORDS: `{Config.URGENT_KEYWORDS}`\n"
+                f"- MAX_ARTICLES_PER_RUN: `{Config.MAX_ARTICLES_PER_RUN}`\n\n"
+                f"⚠️ Изменения в PUBLISH_SCHEDULE потребуют перезапуска бота",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode='Markdown'
+            )
+            self.bot.answer_callback_query(call.id, "✅ Конфигурация перезагружена")
+        except Exception as e:
+            logger.error(f"Ошибка в _handle_reload_config_callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при перезагрузке")
 
     def start_polling(self):
         """Запуск бота в режиме polling"""

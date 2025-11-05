@@ -131,7 +131,9 @@ class NewsDatabase:
                 'URGENT_KEYWORDS': 'молния,breaking',
                 'MAX_ARTICLES_PER_RUN': '5',
                 'ARTICLE_STYLE': 'informative',
-                'CHECK_INTERVAL': '60'
+                'CHECK_INTERVAL': '60',
+                'TEXT_LENGTH': 'medium',  # short=1000, medium=2000, long=3000
+                'MONITOR_FROM_DATE': ''  # пустая строка = мониторить с момента запуска бота
             }
 
             for key, value in default_configs.items():

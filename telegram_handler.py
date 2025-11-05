@@ -26,8 +26,23 @@ class TelegramHandler:
         self.db = database if database else NewsDatabase()
         self.scheduler = PublicationScheduler()
         self.urgent_keywords = Config.get_urgent_keywords()
-        # Время запуска бота для фильтрации старых сообщений
-        self.bot_start_time = datetime.now(timezone.utc)
+
+        # Определяем время начала мониторинга
+        monitor_from_date_str = Config.get_monitor_from_date()
+        if monitor_from_date_str and monitor_from_date_str.strip():
+            try:
+                # Парсим дату из настроек
+                self.bot_start_time = datetime.strptime(monitor_from_date_str, '%Y-%m-%d %H:%M:%S')
+                # Добавляем timezone info
+                self.bot_start_time = self.bot_start_time.replace(tzinfo=timezone.utc)
+                logger.info(f"Дата мониторинга установлена из конфигурации: {self.bot_start_time}")
+            except ValueError as e:
+                logger.warning(f"Неверный формат даты в MONITOR_FROM_DATE: {monitor_from_date_str}. Используется время запуска бота. Ошибка: {e}")
+                self.bot_start_time = datetime.now(timezone.utc)
+        else:
+            # Время запуска бота для фильтрации старых сообщений (если дата не указана)
+            self.bot_start_time = datetime.now(timezone.utc)
+
         logger.info(f"Бот запущен. Будут обрабатываться только сообщения после {self.bot_start_time}")
 
         # Инициализация DeepSeek клиента с текущим стилем
@@ -94,6 +109,15 @@ class TelegramHandler:
         @self.bot.message_handler(commands=['reload_config', 'reloadconfig'])
         def cmd_reload_config(message):
             self._cmd_reload_config(message)
+
+        @self.bot.message_handler(commands=['settings'])
+        def cmd_settings(message):
+            self._cmd_settings(message)
+
+        # Callback обработчик для inline кнопок
+        @self.bot.callback_query_handler(func=lambda call: True)
+        def callback_query(call):
+            self._handle_callback_query(call)
 
         logger.info("Обработчики Telegram настроены")
 
@@ -367,17 +391,27 @@ class TelegramHandler:
         help_text = f"""
 Доступные команды:
 
+📋 Основные:
 /start - Информация о боте
 /status - Статус очереди новостей
 /queue - Показать новости в очереди
-/view [id] - Просмотр публикации по ID
-/publishnow [id] (или /publish_now) - Опубликовать новость немедленно
-/clear_queue - Очистить очередь новостей
-/set_style [style] (или /setstyle) - Изменить стиль написания статей
-/get_style (или /getstyle) - Показать текущий стиль написания
 /help - Это сообщение
 
+⚙️ Настройки (админ):
+/settings - Интерактивное меню настроек (кнопки)
+/set_style [style] - Изменить стиль написания
+/get_style - Показать текущий стиль
+/config - Показать все настройки
+/set_config [key] [value] - Изменить настройку
+/reload_config - Перезагрузить настройки
+
+📰 Публикации (админ):
+/view [id] - Просмотр публикации по ID
+/publishnow [id] - Опубликовать немедленно
+/clear_queue - Очистить очередь
+
 Доступные стили: {available_styles}
+Доступные длины: short (1000), medium (2000), long (3000)
 """
         # Отправляем без HTML парсинга, так как это обычный текст
         self.bot.reply_to(message, help_text, parse_mode=None)
@@ -788,6 +822,297 @@ class TelegramHandler:
         except Exception as e:
             logger.error(f"Ошибка в команде /reload_config: {e}")
             self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _cmd_settings(self, message: types.Message):
+        """Команда /settings - главное меню настроек с кнопками"""
+        try:
+            user_id = str(message.from_user.id)
+            logger.info(f"Команда /settings от пользователя ID: {user_id}")
+
+            # Проверка прав администратора
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    logger.warning(f"Отказано в доступе для пользователя {user_id}")
+                    self.bot.reply_to(
+                        message,
+                        f"❌ У вас нет прав для выполнения этой команды\n"
+                        f"Ваш ID: {user_id}"
+                    )
+                    return
+            else:
+                logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
+
+            # Создаем inline клавиатуру с кнопками настроек
+            keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+            current_style = self.deepseek.get_style()
+            current_length = Config.get_text_length()
+            monitor_date = Config.get_monitor_from_date() or "С момента запуска"
+
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    f"📝 Стиль: {current_style}",
+                    callback_data="settings_style"
+                ),
+                types.InlineKeyboardButton(
+                    f"📏 Длина текста: {current_length}",
+                    callback_data="settings_length"
+                ),
+                types.InlineKeyboardButton(
+                    f"📅 Мониторить с: {monitor_date[:19]}",
+                    callback_data="settings_date"
+                )
+            )
+
+            settings_text = f"""
+⚙️ **Настройки бота**
+
+Текущие параметры:
+• Стиль написания: `{current_style}`
+• Длина текста: `{current_length}` ({Config.get_text_length_chars()} символов)
+• Мониторинг с: `{monitor_date}`
+
+Нажмите на кнопку для изменения настройки.
+"""
+
+            self.bot.reply_to(
+                message,
+                settings_text,
+                parse_mode='Markdown',
+                reply_markup=keyboard
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка в команде /settings: {e}")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _handle_callback_query(self, call):
+        """Обработчик callback запросов от inline кнопок"""
+        try:
+            user_id = str(call.from_user.id)
+
+            # Проверка прав администратора
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    self.bot.answer_callback_query(
+                        call.id,
+                        "❌ У вас нет прав для изменения настроек"
+                    )
+                    return
+
+            # Обработка разных типов callback
+            if call.data == "settings_style":
+                self._show_style_keyboard(call)
+            elif call.data == "settings_length":
+                self._show_length_keyboard(call)
+            elif call.data == "settings_date":
+                self._show_date_settings(call)
+            elif call.data.startswith("style_"):
+                self._set_style_from_callback(call)
+            elif call.data.startswith("length_"):
+                self._set_length_from_callback(call)
+            elif call.data == "back_to_settings":
+                self._show_settings_menu(call)
+
+        except Exception as e:
+            logger.error(f"Ошибка в обработчике callback: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при обработке запроса")
+
+    def _show_style_keyboard(self, call):
+        """Показать клавиатуру выбора стиля"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+        style_names = {
+            'informative': '📰 Информативный',
+            'ironic': '😏 Ироничный',
+            'cynical': '😒 Циничный',
+            'playful': '😄 Шутливый',
+            'mocking': '🤣 Стебной'
+        }
+
+        current_style = self.deepseek.get_style()
+
+        for style_key, style_name in style_names.items():
+            checkmark = " ✓" if style_key == current_style else ""
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    f"{style_name}{checkmark}",
+                    callback_data=f"style_{style_key}"
+                )
+            )
+
+        keyboard.add(
+            types.InlineKeyboardButton("← Назад", callback_data="back_to_settings")
+        )
+
+        self.bot.edit_message_text(
+            "📝 **Выберите стиль написания:**\n\nСтиль применяется ко всем новым статьям.",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+
+        self.bot.answer_callback_query(call.id)
+
+    def _show_length_keyboard(self, call):
+        """Показать клавиатуру выбора длины текста"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+        length_names = {
+            'short': '📄 Короткий (1000 символов)',
+            'medium': '📃 Средний (2000 символов)',
+            'long': '📰 Длинный (3000 символов)'
+        }
+
+        current_length = Config.get_text_length()
+
+        for length_key, length_name in length_names.items():
+            checkmark = " ✓" if length_key == current_length else ""
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    f"{length_name}{checkmark}",
+                    callback_data=f"length_{length_key}"
+                )
+            )
+
+        keyboard.add(
+            types.InlineKeyboardButton("← Назад", callback_data="back_to_settings")
+        )
+
+        self.bot.edit_message_text(
+            "📏 **Выберите длину текста:**\n\nДлина применяется ко всем новым статьям.",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+
+        self.bot.answer_callback_query(call.id)
+
+    def _show_date_settings(self, call):
+        """Показать настройки даты мониторинга"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            types.InlineKeyboardButton("← Назад", callback_data="back_to_settings")
+        )
+
+        current_date = Config.get_monitor_from_date() or "Не установлена (с момента запуска)"
+
+        instructions = f"""
+📅 **Настройка даты мониторинга**
+
+Текущая дата: `{current_date}`
+
+Чтобы изменить дату мониторинга, используйте команду:
+`/set_config MONITOR_FROM_DATE "YYYY-MM-DD HH:MM:SS"`
+
+Примеры:
+• `/set_config MONITOR_FROM_DATE "2025-01-01 00:00:00"`
+• `/set_config MONITOR_FROM_DATE ""` (сбросить)
+
+После изменения требуется перезапуск бота.
+"""
+
+        self.bot.edit_message_text(
+            instructions,
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+
+        self.bot.answer_callback_query(call.id)
+
+    def _set_style_from_callback(self, call):
+        """Установить стиль из callback"""
+        style = call.data.replace("style_", "")
+
+        if style in Config.AVAILABLE_STYLES:
+            # Обновляем стиль в DeepSeek
+            self.deepseek.set_style(style)
+
+            # Сохраняем в БД
+            Config.update_config('ARTICLE_STYLE', style)
+
+            self.bot.answer_callback_query(
+                call.id,
+                f"✅ Стиль изменен на: {style}"
+            )
+
+            # Обновляем меню
+            self._show_settings_menu(call)
+        else:
+            self.bot.answer_callback_query(
+                call.id,
+                "❌ Неизвестный стиль"
+            )
+
+    def _set_length_from_callback(self, call):
+        """Установить длину текста из callback"""
+        length = call.data.replace("length_", "")
+
+        if length in Config.AVAILABLE_TEXT_LENGTHS:
+            # Сохраняем в БД
+            Config.update_config('TEXT_LENGTH', length)
+
+            chars = Config.AVAILABLE_TEXT_LENGTHS[length]
+            self.bot.answer_callback_query(
+                call.id,
+                f"✅ Длина изменена на: {length} ({chars} символов)"
+            )
+
+            # Обновляем меню
+            self._show_settings_menu(call)
+        else:
+            self.bot.answer_callback_query(
+                call.id,
+                "❌ Неизвестная длина"
+            )
+
+    def _show_settings_menu(self, call):
+        """Показать главное меню настроек"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+        current_style = self.deepseek.get_style()
+        current_length = Config.get_text_length()
+        monitor_date = Config.get_monitor_from_date() or "С момента запуска"
+
+        keyboard.add(
+            types.InlineKeyboardButton(
+                f"📝 Стиль: {current_style}",
+                callback_data="settings_style"
+            ),
+            types.InlineKeyboardButton(
+                f"📏 Длина текста: {current_length}",
+                callback_data="settings_length"
+            ),
+            types.InlineKeyboardButton(
+                f"📅 Мониторить с: {monitor_date[:19]}",
+                callback_data="settings_date"
+            )
+        )
+
+        settings_text = f"""
+⚙️ **Настройки бота**
+
+Текущие параметры:
+• Стиль написания: `{current_style}`
+• Длина текста: `{current_length}` ({Config.get_text_length_chars()} символов)
+• Мониторинг с: `{monitor_date}`
+
+Нажмите на кнопку для изменения настройки.
+"""
+
+        self.bot.edit_message_text(
+            settings_text,
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+
+        self.bot.answer_callback_query(call.id)
 
     def start_polling(self):
         """Запуск бота в режиме polling"""

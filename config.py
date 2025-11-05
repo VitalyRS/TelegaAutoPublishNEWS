@@ -31,6 +31,7 @@ class Config:
     FLASK_HOST = os.getenv('FLASK_HOST', '0.0.0.0')
     FLASK_PORT = int(os.getenv('FLASK_PORT', 5000))
     WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+    WEBHOOK_PATH = os.getenv('WEBHOOK_PATH', '/webhook')  # Путь для обработки webhook
 
     # Настройки бота (могут загружаться из БД)
     CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', 60))

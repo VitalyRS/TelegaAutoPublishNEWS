@@ -1127,7 +1127,77 @@ class TelegramHandler:
 
         self.bot.infinity_polling(none_stop=True, interval=1)
 
+    def set_webhook(self):
+        """
+        Установка webhook для получения обновлений от Telegram
+        Требуется HTTPS URL
+        """
+        if not Config.WEBHOOK_URL:
+            raise ValueError("WEBHOOK_URL не установлен в конфигурации")
+
+        webhook_url = Config.WEBHOOK_URL + Config.WEBHOOK_PATH
+        logger.info(f"Установка webhook: {webhook_url}")
+
+        try:
+            self.bot.remove_webhook()
+            logger.info("Предыдущий webhook удален")
+
+            # Устанавливаем webhook
+            self.bot.set_webhook(
+                url=webhook_url,
+                drop_pending_updates=False  # Не пропускаем ожидающие обновления
+            )
+
+            # Проверяем установку
+            webhook_info = self.bot.get_webhook_info()
+            logger.info(f"Webhook установлен успешно: {webhook_info.url}")
+            logger.info(f"Ожидающих обновлений: {webhook_info.pending_update_count}")
+
+            if webhook_info.last_error_date:
+                logger.warning(f"Последняя ошибка webhook: {webhook_info.last_error_message}")
+
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при установке webhook: {e}")
+            raise
+
+    def start_webhook(self):
+        """
+        Запуск бота в режиме webhook
+        Не блокирует выполнение - webhook обрабатывается через Flask
+        """
+        logger.info("Запуск бота в режиме webhook")
+
+        try:
+            self.set_webhook()
+            logger.info("Бот готов принимать обновления через webhook")
+        except Exception as e:
+            logger.error(f"Не удалось запустить webhook: {e}")
+            raise
+
+    def process_webhook_update(self, update_data: dict):
+        """
+        Обработка обновления от Telegram через webhook
+
+        Args:
+            update_data: JSON данные обновления от Telegram
+        """
+        try:
+            # Преобразуем JSON в объект Update для telebot
+            update = telebot.types.Update.de_json(update_data)
+
+            # Обрабатываем обновление через bot
+            self.bot.process_new_updates([update])
+
+            logger.debug(f"Webhook обновление обработано: {update.update_id}")
+        except Exception as e:
+            logger.error(f"Ошибка при обработке webhook обновления: {e}", exc_info=True)
+            raise
+
     def stop(self):
         """Остановка бота"""
         logger.info("Остановка бота")
-        self.bot.stop_polling()
+        try:
+            self.bot.stop_polling()
+        except:
+            pass  # Polling может не работать в webhook режиме

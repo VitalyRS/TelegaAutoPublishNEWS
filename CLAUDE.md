@@ -5,12 +5,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running the Bot
 
 ```bash
-# Standard polling mode (recommended for development)
+# Polling mode (recommended for development and simple setups)
 python app.py
 
-# Flask + webhook mode (for production with HTTPS)
-python app.py flask
+# Webhook mode (recommended for production with HTTPS)
+python app.py webhook
 ```
+
+### Polling vs Webhook
+
+**Polling Mode (default)**:
+- Bot continuously polls Telegram servers for updates
+- Easy to set up, no HTTPS required
+- Works behind NAT/firewall
+- Suitable for development and small deployments
+- Command: `python app.py`
+
+**Webhook Mode**:
+- Telegram sends updates directly to your server
+- Requires HTTPS with valid SSL certificate
+- More efficient for high-load scenarios
+- Requires public IP or domain
+- Lower latency for message processing
+- Command: `python app.py webhook`
 
 ## Setup Requirements
 
@@ -31,6 +48,50 @@ Required credentials in `.env`:
 - `ADMIN_USER_ID` - Telegram user ID for admin commands
 - `ARTICLE_STYLE` - writing style (informative, ironic, cynical, playful, mocking) - default: informative
 - `DATABASE_URL` - PostgreSQL connection URL (recommended for Aiven) OR separate DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD parameters
+
+### Webhook Setup (Optional, for Production)
+
+For webhook mode, you also need:
+
+```bash
+# In .env file
+WEBHOOK_URL=https://your-domain.com
+WEBHOOK_PATH=/webhook
+FLASK_HOST=0.0.0.0
+FLASK_PORT=5000
+```
+
+**Requirements for webhook mode:**
+1. **HTTPS domain** with valid SSL certificate (Telegram requires HTTPS)
+2. **Public IP** or domain accessible from the internet
+3. **Port configuration**: Telegram supports ports 443, 80, 88, 8443
+4. **Reverse proxy** (nginx/Apache) recommended for SSL termination
+
+**Example nginx configuration:**
+```nginx
+server {
+    listen 443 ssl;
+    server_name your-domain.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location /webhook {
+        proxy_pass http://127.0.0.1:5000/webhook;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+**Testing webhook:**
+```bash
+# Start bot in webhook mode
+python app.py webhook
+
+# Check webhook status
+curl https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo
+```
 
 ## Technology Stack
 
@@ -88,8 +149,9 @@ Articles containing keywords from `URGENT_KEYWORDS` (`молния`, `breaking` 
   - Queries database for articles where `scheduled_time <= now()`
   - Publishes via `publish_news_by_id()`
   - Updates article status
-- Bot runs in synchronous mode using `telebot.TeleBot` with polling
+- Bot supports two modes: polling (default, `infinity_polling()`) and webhook (production, Flask route)
 - Long-running tasks (URL processing) execute in separate threads to avoid blocking
+- In webhook mode, Flask server handles incoming updates via POST requests to WEBHOOK_PATH
 
 ## Configuration Customization
 
@@ -244,9 +306,11 @@ Change style using `/set_style <style>` command (admin only). The style applies 
 ### Telegram Handler
 - Uses decorator-based handlers: `@bot.channel_post_handler()` for channel messages
 - Commands registered via `@bot.message_handler(commands=['...'])`
-- `infinity_polling()` for continuous message polling
+- **Polling mode**: `infinity_polling()` for continuous message polling (default)
+- **Webhook mode**: `set_webhook()` configures Telegram to send updates to Flask route
 - Message handlers execute synchronously; background tasks use threading
 - All handlers are set up in `_setup_handlers()` during initialization
+- In webhook mode, `process_webhook_update()` handles incoming POST requests from Telegram
 
 ### Message Processing Flow
 1. Channel post received → `_handle_channel_message()`
@@ -263,6 +327,13 @@ Check `bot.log` for errors. Common issues:
 - **Schedule not triggering**: Verify BackgroundScheduler is running and time slots are future times
 - **Import errors**: Ensure `pyTelegramBotAPI` (not `python-telegram-bot`) is installed
 - **Polling errors**: Check bot token validity and network connectivity
+- **Webhook errors**:
+  - Verify WEBHOOK_URL is HTTPS (Telegram requires SSL)
+  - Check webhook status: `curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo`
+  - Ensure Flask is accessible from the internet on configured port
+  - Verify reverse proxy (nginx/Apache) is properly configured
+  - Check firewall allows incoming connections to webhook port
+  - Telegram only supports ports: 443, 80, 88, 8443
 - **Database connection**:
   - Verify DATABASE_URL or DB_* parameters are correctly set
   - Check SSL/TLS settings (Aiven requires `sslmode=require`)

@@ -17,12 +17,13 @@ logger = logging.getLogger(__name__)
 class TelegramHandler:
     """Класс для работы с Telegram API"""
 
-    def __init__(self):
+    def __init__(self, database: Optional[NewsDatabase] = None):
         self.bot_token = Config.TELEGRAM_BOT_TOKEN
         self.source_channel = Config.SOURCE_CHANNEL_ID
         self.target_channel = Config.TARGET_CHANNEL_ID
         self.bot = telebot.TeleBot(self.bot_token, parse_mode='HTML')
-        self.db = NewsDatabase()
+        # Используем переданную БД или создаем новую
+        self.db = database if database else NewsDatabase()
         self.scheduler = PublicationScheduler()
         self.urgent_keywords = Config.get_urgent_keywords()
         # Время запуска бота для фильтрации старых сообщений
@@ -81,6 +82,18 @@ class TelegramHandler:
         @self.bot.message_handler(commands=['view'])
         def cmd_view(message):
             self._cmd_view(message)
+
+        @self.bot.message_handler(commands=['config'])
+        def cmd_config(message):
+            self._cmd_config(message)
+
+        @self.bot.message_handler(commands=['set_config', 'setconfig'])
+        def cmd_set_config(message):
+            self._cmd_set_config(message)
+
+        @self.bot.message_handler(commands=['reload_config', 'reloadconfig'])
+        def cmd_reload_config(message):
+            self._cmd_reload_config(message)
 
         logger.info("Обработчики Telegram настроены")
 
@@ -624,6 +637,156 @@ class TelegramHandler:
             self.bot.reply_to(message, "Неверный формат ID. Используйте: /view [id]", parse_mode=None)
         except Exception as e:
             logger.error(f"Ошибка в команде /view: {e}")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _cmd_config(self, message: types.Message):
+        """Команда /config - показать все настройки бота"""
+        try:
+            user_id = str(message.from_user.id)
+            logger.info(f"Команда /config от пользователя ID: {user_id}")
+
+            # Проверка прав администратора
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    logger.warning(f"Отказано в доступе для пользователя {user_id}")
+                    self.bot.reply_to(
+                        message,
+                        f"❌ У вас нет прав для выполнения этой команды\n"
+                        f"Ваш ID: {user_id}"
+                    )
+                    return
+            else:
+                logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
+
+            # Получаем все настройки из БД
+            all_configs = self.db.get_all_config()
+
+            if not all_configs:
+                self.bot.reply_to(message, "⚠️ Нет настроек в базе данных", parse_mode=None)
+                return
+
+            # Форматируем список настроек
+            config_text = "⚙️ **Настройки бота из базы данных:**\n\n"
+            for key, value in all_configs.items():
+                config_text += f"**{key}:** `{value}`\n"
+
+            config_text += "\nИспользуйте /set_config для изменения настроек"
+
+            self.bot.reply_to(message, config_text, parse_mode='Markdown')
+
+        except Exception as e:
+            logger.error(f"Ошибка в команде /config: {e}")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _cmd_set_config(self, message: types.Message):
+        """Команда /set_config <key> <value> - установить настройку"""
+        try:
+            user_id = str(message.from_user.id)
+            logger.info(f"Команда /set_config от пользователя ID: {user_id}")
+
+            # Проверка прав администратора
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    logger.warning(f"Отказано в доступе для пользователя {user_id}")
+                    self.bot.reply_to(
+                        message,
+                        f"❌ У вас нет прав для выполнения этой команды\n"
+                        f"Ваш ID: {user_id}"
+                    )
+                    return
+            else:
+                logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
+
+            # Извлекаем параметры из команды
+            parts = message.text.split(maxsplit=2)
+            if len(parts) < 3:
+                self.bot.reply_to(
+                    message,
+                    "Использование: /set_config [key] [value]\n\n"
+                    "Доступные настройки:\n"
+                    "- PUBLISH_SCHEDULE (например: 8,12,16,20)\n"
+                    "- URGENT_KEYWORDS (например: молния,breaking)\n"
+                    "- MAX_ARTICLES_PER_RUN (например: 5)\n"
+                    "- ARTICLE_STYLE (например: informative)\n"
+                    "- CHECK_INTERVAL (например: 60)\n\n"
+                    "Используйте /config для просмотра текущих настроек",
+                    parse_mode=None
+                )
+                return
+
+            key = parts[1]
+            value = parts[2]
+
+            # Обновляем настройку
+            if Config.update_config(key, value):
+                logger.info(f"Настройка {key} обновлена на: {value}")
+
+                # Если это стиль - обновляем DeepSeek
+                if key == 'ARTICLE_STYLE':
+                    self.deepseek.set_style(value)
+
+                # Если это ключевые слова - обновляем локальный кэш
+                if key == 'URGENT_KEYWORDS':
+                    self.urgent_keywords = Config.get_urgent_keywords()
+
+                self.bot.reply_to(
+                    message,
+                    f"✅ Настройка обновлена:\n**{key}** = `{value}`\n\n"
+                    f"⚠️ Некоторые изменения (например, PUBLISH_SCHEDULE) "
+                    f"потребуют перезапуска бота для полного применения.",
+                    parse_mode='Markdown'
+                )
+            else:
+                self.bot.reply_to(message, f"❌ Ошибка при обновлении настройки {key}")
+
+        except Exception as e:
+            logger.error(f"Ошибка в команде /set_config: {e}")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _cmd_reload_config(self, message: types.Message):
+        """Команда /reload_config - перезагрузить настройки из БД"""
+        try:
+            user_id = str(message.from_user.id)
+            logger.info(f"Команда /reload_config от пользователя ID: {user_id}")
+
+            # Проверка прав администратора
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    logger.warning(f"Отказано в доступе для пользователя {user_id}")
+                    self.bot.reply_to(
+                        message,
+                        f"❌ У вас нет прав для выполнения этой команды\n"
+                        f"Ваш ID: {user_id}"
+                    )
+                    return
+            else:
+                logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
+
+            # Перезагружаем настройки из БД
+            Config.reload_from_database()
+
+            # Обновляем стиль в DeepSeek
+            self.deepseek.set_style(Config.get_article_style())
+
+            # Обновляем ключевые слова
+            self.urgent_keywords = Config.get_urgent_keywords()
+
+            logger.info("Настройки перезагружены из БД")
+
+            self.bot.reply_to(
+                message,
+                f"✅ Настройки перезагружены из базы данных\n\n"
+                f"Текущие настройки:\n"
+                f"- PUBLISH_SCHEDULE: `{Config.PUBLISH_SCHEDULE}`\n"
+                f"- ARTICLE_STYLE: `{Config.ARTICLE_STYLE}`\n"
+                f"- URGENT_KEYWORDS: `{Config.URGENT_KEYWORDS}`\n"
+                f"- MAX_ARTICLES_PER_RUN: `{Config.MAX_ARTICLES_PER_RUN}`\n\n"
+                f"⚠️ Изменения в PUBLISH_SCHEDULE потребуют перезапуска бота",
+                parse_mode='Markdown'
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка в команде /reload_config: {e}")
             self.bot.reply_to(message, "Ошибка при выполнении команды")
 
     def start_polling(self):

@@ -110,6 +110,37 @@ class NewsDatabase:
                 ON news_queue(status, scheduled_time)
             ''')
 
+            # Индекс для быстрого поиска опубликованных статей по дате
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_published_at
+                ON news_queue(published_at)
+            ''')
+
+            # Таблица для хранения настроек бота
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS bot_config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # Инициализация настроек по умолчанию (если их еще нет)
+            default_configs = {
+                'PUBLISH_SCHEDULE': '8,12,16,20',
+                'URGENT_KEYWORDS': 'молния,breaking',
+                'MAX_ARTICLES_PER_RUN': '5',
+                'ARTICLE_STYLE': 'informative',
+                'CHECK_INTERVAL': '60'
+            }
+
+            for key, value in default_configs.items():
+                cursor.execute('''
+                    INSERT INTO bot_config (key, value)
+                    VALUES (%s, %s)
+                    ON CONFLICT (key) DO NOTHING
+                ''', (key, value))
+
             logger.info("База данных PostgreSQL инициализирована")
 
     def add_news(self, url: str, title: str, original_text: str,
@@ -355,6 +386,105 @@ class NewsDatabase:
             cursor.execute('SELECT * FROM news_queue WHERE id = %s', (news_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    # === Методы для работы с настройками бота ===
+
+    def get_config(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """
+        Получить значение настройки из БД
+
+        Args:
+            key: Ключ настройки
+            default: Значение по умолчанию
+
+        Returns:
+            Значение настройки или default
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT value FROM bot_config WHERE key = %s', (key,))
+                row = cursor.fetchone()
+                return row[0] if row else default
+        except Exception as e:
+            logger.error(f"Ошибка при получении настройки {key}: {e}")
+            return default
+
+    def set_config(self, key: str, value: str) -> bool:
+        """
+        Установить значение настройки в БД
+
+        Args:
+            key: Ключ настройки
+            value: Значение настройки
+
+        Returns:
+            True если успешно
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO bot_config (key, value, updated_at)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (key) DO UPDATE
+                    SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+                ''', (key, value, datetime.now()))
+                logger.info(f"Настройка {key} обновлена: {value}")
+                return True
+        except Exception as e:
+            logger.error(f"Ошибка при установке настройки {key}: {e}")
+            return False
+
+    def get_all_config(self) -> Dict[str, str]:
+        """
+        Получить все настройки из БД
+
+        Returns:
+            Словарь настроек
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute('SELECT key, value, updated_at FROM bot_config')
+                rows = cursor.fetchall()
+                return {row['key']: row['value'] for row in rows}
+        except Exception as e:
+            logger.error(f"Ошибка при получении всех настроек: {e}")
+            return {}
+
+    def delete_old_published_news(self, days: int = 7) -> int:
+        """
+        Удалить опубликованные статьи старше указанного количества дней
+
+        Args:
+            days: Количество дней (по умолчанию 7)
+
+        Returns:
+            Количество удаленных записей
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    DELETE FROM news_queue
+                    WHERE status = 'published'
+                    AND published_at < NOW() - INTERVAL '%s days'
+                    RETURNING id
+                ''', (days,))
+
+                deleted_ids = cursor.fetchall()
+                deleted_count = len(deleted_ids)
+
+                if deleted_count > 0:
+                    logger.info(f"Удалено {deleted_count} старых опубликованных статей (старше {days} дней)")
+                else:
+                    logger.debug(f"Нет опубликованных статей старше {days} дней для удаления")
+
+                return deleted_count
+        except Exception as e:
+            logger.error(f"Ошибка при удалении старых статей: {e}")
+            return 0
 
     def close(self):
         """Закрыть все соединения в pool"""

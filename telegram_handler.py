@@ -830,7 +830,7 @@ class TelegramHandler:
                     ),
                     types.InlineKeyboardButton(
                         "✏️ Переписать",
-                        callback_data=f"rewrite_{news_id}_style"
+                        callback_data=f"rewrite_{news_id}_select_both"
                     )
                 )
                 keyboard.add(
@@ -1894,7 +1894,7 @@ class TelegramHandler:
                     ),
                     types.InlineKeyboardButton(
                         "✏️ Переписать",
-                        callback_data=f"rewrite_{news_id}_style"
+                        callback_data=f"rewrite_{news_id}_select_both"
                     )
                 )
                 keyboard.add(

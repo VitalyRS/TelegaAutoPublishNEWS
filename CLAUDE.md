@@ -30,12 +30,15 @@ Required credentials in `.env`:
 - `DEEPSEEK_API_KEY` - from platform.deepseek.com
 - `ADMIN_USER_ID` - Telegram user ID for admin commands
 - `ARTICLE_STYLE` - writing style (informative, ironic, cynical, playful, mocking) - default: informative
+- `DATABASE_URL` - PostgreSQL connection URL (recommended for Aiven) OR separate DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD parameters
 
 ## Technology Stack
 
 - **Telegram Bot Library**: pyTelegramBotAPI (`import telebot`)
 - **Scheduler**: APScheduler with BackgroundScheduler for automated publishing
-- **Database**: SQLite for news queue management
+- **Database**: PostgreSQL (via Aiven or self-hosted) for news queue management
+  - Uses psycopg2 driver with connection pooling for optimal performance
+  - Supports both DATABASE_URL and separate connection parameters
 - **News Parsing**: newspaper3k for article extraction
 - **AI Processing**: DeepSeek API via OpenAI library for translation and formatting
 
@@ -50,7 +53,7 @@ This bot implements an automated news pipeline with scheduled publishing:
 2. **news_parser.py** extracts article content using newspaper3k
 3. **deepseek_client.py** sends articles to DeepSeek API for translation and formatting
 4. **scheduler.py** determines publication slot (8:00, 12:00, 16:00, 20:00)
-5. **database.py** stores processed articles in SQLite queue
+5. **database.py** stores processed articles in PostgreSQL queue
 6. **APScheduler** (in app.py) triggers publications at scheduled times
 7. **telegram_handler.py** publishes to TARGET_CHANNEL_ID
 
@@ -60,7 +63,7 @@ Articles containing keywords from `URGENT_KEYWORDS` (`молния`, `breaking` 
 ### Scheduling Logic
 - **One article per slot**: Only 1 news item publishes per time slot
 - **Late articles**: News arriving after 20:00 scheduled for next day's 8:00 slot
-- **Queue persistence**: SQLite database (`news_queue.db`) stores pending articles across restarts
+- **Queue persistence**: PostgreSQL database stores pending articles across restarts with full ACID compliance
 - **Old message filtering**: Bot ignores channel messages posted before its startup time (`bot_start_time` set in `__init__`)
 
 ## Key Module Interactions
@@ -93,13 +96,56 @@ Edit `.env` to modify:
 - `MAX_ARTICLES_PER_RUN=5` - Max articles to process per channel message
 - `ARTICLE_STYLE=informative` - Writing style (informative, ironic, cynical, playful, mocking)
 
-## Database Schema
+## Database Configuration
 
-`news_queue` table (news_queue.db):
-- `scheduled_time` - When article will publish
-- `status` - `pending`, `published`, or `failed`
-- `is_urgent` - Boolean flag for immediate publication
-- URL uniqueness constraint prevents duplicate processing
+### Aiven PostgreSQL Setup (Recommended)
+
+The bot uses **Aiven for PostgreSQL** as the cloud database service. To configure:
+
+1. Create PostgreSQL service on [Aiven Console](https://console.aiven.io/)
+2. Copy the Service URI from Aiven dashboard
+3. Add to `.env` file:
+   ```
+   DATABASE_URL=postgresql://user:password@host:port/defaultdb?sslmode=require
+   ```
+
+**Alternative**: Use separate parameters if DATABASE_URL is not available:
+```
+DB_HOST=your-aiven-host.aivencloud.com
+DB_PORT=12345
+DB_NAME=defaultdb
+DB_USER=avnadmin
+DB_PASSWORD=your_password
+DB_SSLMODE=require
+```
+
+### Database Schema
+
+`news_queue` table (PostgreSQL):
+- `id` - SERIAL PRIMARY KEY (auto-incrementing)
+- `url` - TEXT UNIQUE NOT NULL (prevents duplicate processing)
+- `title` - TEXT
+- `original_text` - TEXT
+- `processed_text` - TEXT
+- `scheduled_time` - TIMESTAMP (when article will publish)
+- `status` - TEXT DEFAULT 'pending' (pending/published/failed)
+- `is_urgent` - BOOLEAN DEFAULT FALSE (immediate publication flag)
+- `created_at` - TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+- `published_at` - TIMESTAMP
+
+**Indexes** for performance:
+- `idx_status` on (status)
+- `idx_scheduled_time` on (scheduled_time)
+- `idx_is_urgent` on (is_urgent)
+- `idx_status_scheduled` composite on (status, scheduled_time)
+
+### Database Connection
+
+The `NewsDatabase` class uses connection pooling (1-10 connections) for optimal performance:
+- Automatic connection management with context managers
+- Transaction rollback on errors
+- SSL/TLS support for secure connections (required for Aiven)
+- Graceful connection cleanup on shutdown
 
 ## Bot Commands
 
@@ -167,3 +213,9 @@ Check `bot.log` for errors. Common issues:
 - **Schedule not triggering**: Verify BackgroundScheduler is running and time slots are future times
 - **Import errors**: Ensure `pyTelegramBotAPI` (not `python-telegram-bot`) is installed
 - **Polling errors**: Check bot token validity and network connectivity
+- **Database connection**:
+  - Verify DATABASE_URL or DB_* parameters are correctly set
+  - Check SSL/TLS settings (Aiven requires `sslmode=require`)
+  - Ensure PostgreSQL service is running and accessible
+  - Check firewall rules and network connectivity to database host
+  - Verify credentials (username/password) are correct

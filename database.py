@@ -1,27 +1,64 @@
 """
-Модуль для работы с базой данных очереди новостей
+Модуль для работы с базой данных очереди новостей (PostgreSQL)
 """
-import sqlite3
+import psycopg2
+from psycopg2 import pool, errors
+from psycopg2.extras import RealDictCursor
 import logging
 from datetime import datetime
 from typing import Optional, List, Dict
 from contextlib import contextmanager
+import os
 
 logger = logging.getLogger(__name__)
 
 
 class NewsDatabase:
-    """Класс для работы с БД очереди новостей"""
+    """Класс для работы с PostgreSQL БД очереди новостей"""
 
-    def __init__(self, db_path: str = 'news_queue.db'):
-        self.db_path = db_path
+    def __init__(self, database_url: Optional[str] = None):
+        """
+        Инициализация подключения к PostgreSQL
+
+        Args:
+            database_url: URL подключения к PostgreSQL (формат: postgresql://user:password@host:port/dbname)
+                         Если не указан, используется DATABASE_URL из окружения или собирается из отдельных параметров
+        """
+        if database_url:
+            self.database_url = database_url
+        else:
+            # Сначала пробуем получить полный DATABASE_URL из окружения (рекомендуется для Aiven)
+            self.database_url = os.getenv('DATABASE_URL')
+
+            # Если DATABASE_URL не задан, собираем из отдельных параметров
+            if not self.database_url:
+                db_host = os.getenv('DB_HOST', 'localhost')
+                db_port = os.getenv('DB_PORT', '5432')
+                db_name = os.getenv('DB_NAME', 'news_queue')
+                db_user = os.getenv('DB_USER', 'postgres')
+                db_password = os.getenv('DB_PASSWORD', '')
+                db_sslmode = os.getenv('DB_SSLMODE', 'require')
+
+                self.database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}?sslmode={db_sslmode}"
+
+        # Создаем connection pool для лучшей производительности
+        try:
+            self.connection_pool = pool.SimpleConnectionPool(
+                1,  # минимум соединений
+                10, # максимум соединений
+                self.database_url
+            )
+            logger.info("Connection pool к PostgreSQL успешно создан")
+        except Exception as e:
+            logger.error(f"Ошибка создания connection pool: {e}")
+            raise
+
         self._init_database()
 
     @contextmanager
     def _get_connection(self):
-        """Контекстный менеджер для соединения с БД"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        """Контекстный менеджер для соединения с БД из pool"""
+        conn = self.connection_pool.getconn()
         try:
             yield conn
             conn.commit()
@@ -30,22 +67,24 @@ class NewsDatabase:
             logger.error(f"Ошибка работы с БД: {e}")
             raise
         finally:
-            conn.close()
+            self.connection_pool.putconn(conn)
 
     def _init_database(self):
         """Инициализация структуры БД"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+
+            # Создание таблицы с правильными типами PostgreSQL
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS news_queue (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     url TEXT UNIQUE NOT NULL,
                     title TEXT,
                     original_text TEXT,
                     processed_text TEXT,
                     scheduled_time TIMESTAMP,
                     status TEXT DEFAULT 'pending',
-                    is_urgent INTEGER DEFAULT 0,
+                    is_urgent BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     published_at TIMESTAMP
                 )
@@ -65,7 +104,13 @@ class NewsDatabase:
                 ON news_queue(is_urgent)
             ''')
 
-            logger.info("База данных инициализирована")
+            # Композитный индекс для частого запроса
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_status_scheduled
+                ON news_queue(status, scheduled_time)
+            ''')
+
+            logger.info("База данных PostgreSQL инициализирована")
 
     def add_news(self, url: str, title: str, original_text: str,
                  processed_text: str, scheduled_time: datetime,
@@ -90,14 +135,15 @@ class NewsDatabase:
                 cursor.execute('''
                     INSERT INTO news_queue
                     (url, title, original_text, processed_text, scheduled_time, is_urgent)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (url, title, original_text, processed_text, scheduled_time, int(is_urgent)))
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                ''', (url, title, original_text, processed_text, scheduled_time, is_urgent))
 
-                news_id = cursor.lastrowid
+                news_id = cursor.fetchone()[0]
                 logger.info(f"Новость добавлена в очередь: ID={news_id}, URL={url}")
                 return news_id
 
-        except sqlite3.IntegrityError:
+        except errors.UniqueViolation:
             logger.warning(f"Новость с URL {url} уже существует в очереди")
             return None
         except Exception as e:
@@ -115,13 +161,13 @@ class NewsDatabase:
             Список новостей
         """
         with self._get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute('''
                 SELECT * FROM news_queue
                 WHERE status = 'pending'
-                AND scheduled_time <= ?
+                AND scheduled_time <= %s
                 ORDER BY is_urgent DESC, scheduled_time ASC
-                LIMIT ?
+                LIMIT %s
             ''', (datetime.now(), limit))
 
             rows = cursor.fetchall()
@@ -140,13 +186,13 @@ class NewsDatabase:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT COUNT(*) as count FROM news_queue
+                SELECT COUNT(*) FROM news_queue
                 WHERE status = 'pending'
-                AND datetime(scheduled_time) = datetime(?)
+                AND scheduled_time = %s
             ''', (slot_time,))
 
             result = cursor.fetchone()
-            return result['count'] if result else 0
+            return result[0] if result else 0
 
     def mark_as_published(self, news_id: int) -> bool:
         """
@@ -163,8 +209,8 @@ class NewsDatabase:
                 cursor = conn.cursor()
                 cursor.execute('''
                     UPDATE news_queue
-                    SET status = 'published', published_at = ?
-                    WHERE id = ?
+                    SET status = 'published', published_at = %s
+                    WHERE id = %s
                 ''', (datetime.now(), news_id))
 
                 logger.info(f"Новость ID={news_id} отмечена как опубликованная")
@@ -190,7 +236,7 @@ class NewsDatabase:
                 cursor.execute('''
                     UPDATE news_queue
                     SET status = 'failed'
-                    WHERE id = ?
+                    WHERE id = %s
                 ''', (news_id,))
 
                 logger.info(f"Новость ID={news_id} отмечена как неудачная")
@@ -208,7 +254,7 @@ class NewsDatabase:
             Словарь со статистикой
         """
         with self._get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
 
             # Общая статистика
             cursor.execute('''
@@ -217,7 +263,7 @@ class NewsDatabase:
                     SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
                     SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as published,
                     SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-                    SUM(CASE WHEN is_urgent = 1 THEN 1 ELSE 0 END) as urgent
+                    SUM(CASE WHEN is_urgent = TRUE THEN 1 ELSE 0 END) as urgent
                 FROM news_queue
             ''')
 
@@ -245,7 +291,7 @@ class NewsDatabase:
             Список новостей
         """
         with self._get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute('''
                 SELECT id, title, url, scheduled_time, is_urgent
                 FROM news_queue
@@ -268,7 +314,7 @@ class NewsDatabase:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute('DELETE FROM news_queue WHERE id = ?', (news_id,))
+                cursor.execute('DELETE FROM news_queue WHERE id = %s', (news_id,))
                 logger.info(f"Новость ID={news_id} удалена из очереди")
                 return True
 
@@ -305,7 +351,20 @@ class NewsDatabase:
             Данные новости или None
         """
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM news_queue WHERE id = ?', (news_id,))
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute('SELECT * FROM news_queue WHERE id = %s', (news_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def close(self):
+        """Закрыть все соединения в pool"""
+        if self.connection_pool:
+            self.connection_pool.closeall()
+            logger.info("Connection pool закрыт")
+
+    def __del__(self):
+        """Деструктор для автоматического закрытия соединений"""
+        try:
+            self.close()
+        except:
+            pass

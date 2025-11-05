@@ -44,6 +44,18 @@ class Config:
     # Доступные стили
     AVAILABLE_STYLES = ['informative', 'ironic', 'cynical', 'playful', 'mocking']
 
+    # PostgreSQL Database (Aiven or other)
+    # Опция 1: Полный DATABASE_URL (рекомендуется для Aiven)
+    DATABASE_URL = os.getenv('DATABASE_URL')
+
+    # Опция 2: Отдельные параметры (если DATABASE_URL не указан)
+    DB_HOST = os.getenv('DB_HOST', 'localhost')
+    DB_PORT = os.getenv('DB_PORT', '5432')
+    DB_NAME = os.getenv('DB_NAME', 'news_queue')
+    DB_USER = os.getenv('DB_USER', 'postgres')
+    DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+    DB_SSLMODE = os.getenv('DB_SSLMODE', 'require')  # Aiven требует SSL
+
     @classmethod
     def get_publish_hours(cls) -> list:
         """Получить часы публикации в виде списка"""
@@ -74,6 +86,13 @@ class Config:
         for key in required:
             if not os.getenv(key):
                 missing.append(key)
+
+        # Проверка наличия настроек БД (или DATABASE_URL или отдельные параметры)
+        database_url = os.getenv('DATABASE_URL')
+        db_host = os.getenv('DB_HOST')
+
+        if not database_url and not db_host:
+            missing.append('DATABASE_URL или DB_HOST/DB_USER/DB_PASSWORD/DB_NAME')
 
         if missing:
             raise ValueError(f"Отсутствуют обязательные переменные окружения: {', '.join(missing)}")

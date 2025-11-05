@@ -114,6 +114,10 @@ class TelegramHandler:
         def cmd_settings(message):
             self._cmd_settings(message)
 
+        @self.bot.message_handler(commands=['rewrite'])
+        def cmd_rewrite(message):
+            self._cmd_rewrite(message)
+
         # Callback обработчик для inline кнопок
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_query(call):
@@ -407,6 +411,7 @@ class TelegramHandler:
 
 📰 Публикации (админ):
 /view [id] - Просмотр публикации по ID
+/rewrite [id] - Переписать статью с новым стилем/длиной
 /publishnow [id] - Опубликовать немедленно
 /clear_queue - Очистить очередь
 
@@ -886,6 +891,98 @@ class TelegramHandler:
             logger.error(f"Ошибка в команде /settings: {e}")
             self.bot.reply_to(message, "Ошибка при выполнении команды")
 
+    def _cmd_rewrite(self, message: types.Message):
+        """Команда /rewrite <id> - переписать статью с новым стилем/длиной"""
+        try:
+            user_id = str(message.from_user.id)
+            logger.info(f"Команда /rewrite от пользователя ID: {user_id}")
+
+            # Проверка прав администратора
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    logger.warning(f"Отказано в доступе для пользователя {user_id}")
+                    self.bot.reply_to(
+                        message,
+                        f"❌ У вас нет прав для выполнения этой команды\n"
+                        f"Ваш ID: {user_id}"
+                    )
+                    return
+            else:
+                logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
+
+            # Извлекаем ID из команды
+            parts = message.text.split()
+            if len(parts) < 2:
+                self.bot.reply_to(
+                    message,
+                    "Использование: /rewrite [id]\n\n"
+                    "Укажите ID статьи для переписывания.\n"
+                    "Пример: /rewrite 123",
+                    parse_mode=None
+                )
+                return
+
+            news_id = int(parts[1])
+            logger.info(f"Запрос на переписывание статьи ID: {news_id}")
+
+            # Получаем новость из БД
+            news = self.db.get_news_by_id(news_id)
+            if not news:
+                self.bot.reply_to(message, f"❌ Статья с ID {news_id} не найдена")
+                return
+
+            # Показываем меню выбора параметров переписывания
+            self._show_rewrite_menu(message, news_id)
+
+        except ValueError:
+            self.bot.reply_to(message, "Неверный формат ID. Используйте: /rewrite [id]", parse_mode=None)
+        except Exception as e:
+            logger.error(f"Ошибка в команде /rewrite: {e}")
+            self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _show_rewrite_menu(self, message: types.Message, news_id: int):
+        """Показать меню выбора параметров для переписывания"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+        current_style = self.deepseek.get_style()
+        current_length = Config.get_text_length()
+
+        keyboard.add(
+            types.InlineKeyboardButton(
+                f"📝 Изменить стиль (текущий: {current_style})",
+                callback_data=f"rewrite_{news_id}_style"
+            ),
+            types.InlineKeyboardButton(
+                f"📏 Изменить длину (текущая: {current_length})",
+                callback_data=f"rewrite_{news_id}_length"
+            ),
+            types.InlineKeyboardButton(
+                "✅ Переписать со всеми настройками",
+                callback_data=f"rewrite_{news_id}_confirm_both"
+            )
+        )
+
+        menu_text = f"""
+✏️ **Переписывание статьи ID {news_id}**
+
+Выберите параметры для переписывания:
+
+• **Стиль**: {current_style}
+• **Длина**: {current_length} ({Config.get_text_length_chars()} символов)
+
+Вы можете:
+1. Изменить только стиль
+2. Изменить только длину
+3. Переписать со всеми новыми параметрами
+"""
+
+        self.bot.reply_to(
+            message,
+            menu_text,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+
     def _handle_callback_query(self, call):
         """Обработчик callback запросов от inline кнопок"""
         try:
@@ -913,6 +1010,9 @@ class TelegramHandler:
                 self._set_length_from_callback(call)
             elif call.data == "back_to_settings":
                 self._show_settings_menu(call)
+            # Обработка переписывания
+            elif call.data.startswith("rewrite_"):
+                self._handle_rewrite_callback(call)
 
         except Exception as e:
             logger.error(f"Ошибка в обработчике callback: {e}")
@@ -1113,6 +1213,250 @@ class TelegramHandler:
         )
 
         self.bot.answer_callback_query(call.id)
+
+    def _handle_rewrite_callback(self, call):
+        """Обработчик callback для переписывания статьи"""
+        try:
+            data_parts = call.data.split("_")
+
+            # Формат: rewrite_{news_id}_{action}[_{param}]
+            if len(data_parts) < 3:
+                self.bot.answer_callback_query(call.id, "Ошибка: неверный формат данных")
+                return
+
+            news_id = int(data_parts[1])
+            action = data_parts[2]
+
+            if action == "style":
+                # Показать меню выбора стиля для переписывания
+                self._show_rewrite_style_menu(call, news_id)
+            elif action == "length":
+                # Показать меню выбора длины для переписывания
+                self._show_rewrite_length_menu(call, news_id)
+            elif action == "confirm":
+                # Подтверждение переписывания
+                if len(data_parts) >= 4:
+                    param = data_parts[3]  # both, style_X, length_X
+                    self._execute_rewrite(call, news_id, param)
+            elif action == "setstyle":
+                # Установить стиль и показать меню подтверждения
+                if len(data_parts) >= 4:
+                    selected_style = data_parts[3]
+                    self._set_rewrite_style(call, news_id, selected_style)
+            elif action == "setlength":
+                # Установить длину и показать меню подтверждения
+                if len(data_parts) >= 4:
+                    selected_length = data_parts[3]
+                    self._set_rewrite_length(call, news_id, selected_length)
+
+        except Exception as e:
+            logger.error(f"Ошибка в обработчике callback переписывания: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при обработке запроса")
+
+    def _show_rewrite_style_menu(self, call, news_id: int):
+        """Показать меню выбора стиля для переписывания"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+        style_names = {
+            'informative': '📰 Информативный',
+            'ironic': '😏 Ироничный',
+            'cynical': '😒 Циничный',
+            'playful': '😄 Шутливый',
+            'mocking': '🤣 Стебной'
+        }
+
+        current_style = self.deepseek.get_style()
+
+        for style_key, style_name in style_names.items():
+            checkmark = " ✓" if style_key == current_style else ""
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    f"{style_name}{checkmark}",
+                    callback_data=f"rewrite_{news_id}_setstyle_{style_key}"
+                )
+            )
+
+        self.bot.edit_message_text(
+            f"📝 **Выберите новый стиль для статьи ID {news_id}:**\n\n"
+            f"Текущий стиль: {current_style}",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+
+        self.bot.answer_callback_query(call.id)
+
+    def _show_rewrite_length_menu(self, call, news_id: int):
+        """Показать меню выбора длины для переписывания"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+
+        length_names = {
+            'short': '📄 Короткий (1000 символов)',
+            'medium': '📃 Средний (2000 символов)',
+            'long': '📰 Длинный (3000 символов)'
+        }
+
+        current_length = Config.get_text_length()
+
+        for length_key, length_name in length_names.items():
+            checkmark = " ✓" if length_key == current_length else ""
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    f"{length_name}{checkmark}",
+                    callback_data=f"rewrite_{news_id}_setlength_{length_key}"
+                )
+            )
+
+        self.bot.edit_message_text(
+            f"📏 **Выберите новую длину для статьи ID {news_id}:**\n\n"
+            f"Текущая длина: {current_length} ({Config.get_text_length_chars()} символов)",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+
+        self.bot.answer_callback_query(call.id)
+
+    def _set_rewrite_style(self, call, news_id: int, new_style: str):
+        """Установить новый стиль и предложить переписать"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "✅ Переписать с этим стилем",
+                callback_data=f"rewrite_{news_id}_confirm_style_{new_style}"
+            ),
+            types.InlineKeyboardButton(
+                "📏 Также изменить длину",
+                callback_data=f"rewrite_{news_id}_length"
+            )
+        )
+
+        self.bot.edit_message_text(
+            f"📝 **Переписывание статьи ID {news_id}**\n\n"
+            f"Новый стиль: **{new_style}**\n"
+            f"Длина: {Config.get_text_length()} ({Config.get_text_length_chars()} символов)",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+
+        self.bot.answer_callback_query(call.id, f"Стиль установлен: {new_style}")
+
+    def _set_rewrite_length(self, call, news_id: int, new_length: str):
+        """Установить новую длину и предложить переписать"""
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        keyboard.add(
+            types.InlineKeyboardButton(
+                "✅ Переписать с этой длиной",
+                callback_data=f"rewrite_{news_id}_confirm_length_{new_length}"
+            ),
+            types.InlineKeyboardButton(
+                "📝 Также изменить стиль",
+                callback_data=f"rewrite_{news_id}_style"
+            )
+        )
+
+        chars = Config.AVAILABLE_TEXT_LENGTHS.get(new_length, 2000)
+        self.bot.edit_message_text(
+            f"📏 **Переписывание статьи ID {news_id}**\n\n"
+            f"Стиль: **{self.deepseek.get_style()}**\n"
+            f"Новая длина: **{new_length}** ({chars} символов)",
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode='Markdown',
+            reply_markup=keyboard
+        )
+
+        self.bot.answer_callback_query(call.id, f"Длина установлена: {new_length}")
+
+    def _execute_rewrite(self, call, news_id: int, param: str):
+        """Выполнить переписывание статьи"""
+        try:
+            # Получаем статью из БД
+            news = self.db.get_news_by_id(news_id)
+            if not news:
+                self.bot.answer_callback_query(call.id, f"❌ Статья {news_id} не найдена")
+                return
+
+            # Определяем параметры переписывания
+            new_style = None
+            new_length = None
+
+            if param == "both":
+                # Переписать с текущими настройками (и стиль, и длина)
+                new_style = self.deepseek.get_style()
+                new_length = Config.get_text_length()
+            elif param.startswith("style_"):
+                # Переписать только с новым стилем
+                new_style = param.replace("style_", "")
+                new_length = None
+            elif param.startswith("length_"):
+                # Переписать только с новой длиной
+                new_style = None
+                new_length = param.replace("length_", "")
+
+            # Показываем сообщение о начале переписывания
+            self.bot.edit_message_text(
+                f"⏳ **Переписываю статью ID {news_id}...**\n\n"
+                f"Стиль: {new_style or 'текущий'}\n"
+                f"Длина: {new_length or 'текущая'}\n\n"
+                f"Это может занять несколько секунд...",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode='Markdown'
+            )
+
+            # Подготавливаем данные для переписывания
+            article_data = {
+                'title': news.get('title', ''),
+                'text': news.get('original_text', '')
+            }
+
+            # Переписываем через DeepSeek
+            rewritten_text = self.deepseek.rewrite_article(
+                article_data,
+                new_style=new_style,
+                text_length=new_length
+            )
+
+            if rewritten_text:
+                # Обновляем текст в БД
+                success = self.db.update_processed_text(news_id, rewritten_text)
+
+                if success:
+                    self.bot.edit_message_text(
+                        f"✅ **Статья ID {news_id} успешно переписана!**\n\n"
+                        f"Стиль: {new_style or self.deepseek.get_style()}\n"
+                        f"Длина: {new_length or Config.get_text_length()}\n\n"
+                        f"Используйте /view {news_id} для просмотра результата.",
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        parse_mode='Markdown'
+                    )
+                    self.bot.answer_callback_query(call.id, "✅ Статья переписана!")
+                else:
+                    self.bot.edit_message_text(
+                        f"❌ Ошибка при сохранении переписанной статьи в БД",
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        parse_mode='Markdown'
+                    )
+                    self.bot.answer_callback_query(call.id, "❌ Ошибка сохранения")
+            else:
+                self.bot.edit_message_text(
+                    f"❌ Ошибка при переписывании статьи через DeepSeek API",
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    parse_mode='Markdown'
+                )
+                self.bot.answer_callback_query(call.id, "❌ Ошибка переписывания")
+
+        except Exception as e:
+            logger.error(f"Ошибка при выполнении переписывания: {e}")
+            self.bot.answer_callback_query(call.id, "❌ Ошибка выполнения")
 
     def start_polling(self):
         """Запуск бота в режиме polling"""

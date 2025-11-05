@@ -177,3 +177,117 @@ class DeepSeekClient:
     def get_style(self) -> str:
         """Получить текущий стиль написания"""
         return self.style
+
+    def rewrite_article(self, article_data: Dict[str, str], new_style: str = None,
+                       text_length: str = None) -> Optional[str]:
+        """
+        Переписать статью с новым стилем и/или длиной текста
+
+        Args:
+            article_data: Данные статьи (должны содержать 'title' и 'text')
+            new_style: Новый стиль написания (если None - использовать текущий)
+            text_length: Длина текста ('short', 'medium', 'long', если None - использовать текущую)
+
+        Returns:
+            Переписанный текст или None в случае ошибки
+        """
+        try:
+            # Временно сохраняем текущий стиль
+            original_style = self.style
+
+            # Устанавливаем новый стиль если указан
+            if new_style:
+                self.style = new_style
+
+            # Создаем промпт с указанной длиной или текущей
+            prompt = self._create_rewrite_prompt(article_data, text_length)
+
+            # Делаем запрос
+            response = self._make_request(prompt)
+
+            # Восстанавливаем оригинальный стиль
+            self.style = original_style
+
+            if response:
+                logger.info(f"Успешно переписана статья: {article_data.get('title')} "
+                          f"(стиль: {new_style or original_style}, длина: {text_length or 'текущая'})")
+                return response
+            else:
+                logger.error("Не получен ответ от DeepSeek API при переписывании")
+                return None
+
+        except Exception as e:
+            # Восстанавливаем оригинальный стиль в случае ошибки
+            self.style = original_style
+            logger.error(f"Ошибка при переписывании статьи через DeepSeek: {e}")
+            return None
+
+    def _create_rewrite_prompt(self, article_data: Dict[str, str], text_length: str = None) -> str:
+        """
+        Создание промпта для переписывания статьи
+
+        Args:
+            article_data: Данные статьи
+            text_length: Желаемая длина текста
+
+        Returns:
+            Промпт для API
+        """
+        from config import Config
+
+        style_description = self.STYLE_DESCRIPTIONS.get(self.style, self.STYLE_DESCRIPTIONS['informative'])
+
+        # Получаем ограничение по длине текста
+        if text_length:
+            # Используем указанную длину
+            length_chars = Config.AVAILABLE_TEXT_LENGTHS.get(text_length, 2000)
+            length_name = text_length
+        else:
+            # Используем текущую настройку
+            length_chars = Config.get_text_length_chars()
+            length_name = Config.get_text_length()
+
+        prompt = f"""
+Ты профессиональный редактор новостного портала. Твоя задача - ПЕРЕПИСАТЬ существующую статью в новом стиле и/или с новой длиной.
+
+СТИЛЬ НАПИСАНИЯ: {style_description}
+
+ОГРАНИЧЕНИЕ ПО ДЛИНЕ:
+Длина текста должна быть {length_name.upper()} (примерно {length_chars} символов).
+- Если short (1000 символов): краткое изложение основных фактов
+- Если medium (2000 символов): стандартная статья с деталями
+- Если long (3000 символов): подробная статья с расширенным контекстом
+
+ТРЕБОВАНИЯ К ОФОРМЛЕНИЮ:
+1. Переписать статью в указанном выше стиле
+2. Разбить на абзацы для удобного чтения
+3. ВАЖНО: НЕ использовать символы форматирования! Никаких *, _, **, __, #, `, ~ и других специальных символов для форматирования!
+4. Писать простым текстом без какой-либо разметки
+5. НЕ ВКЛЮЧАТЬ информацию об авторе или дате публикации
+6. СТРОГО соблюдать ограничение по длине текста (~{length_chars} символов)
+
+СТРУКТУРА ПУБЛИКАЦИИ:
+1. ПЕРВАЯ СТРОКА - заголовок статьи (простой текст, без символов форматирования)
+2. Пустая строка
+3. Основной текст, разбитый на абзацы (длина основного текста ~{length_chars} символов)
+4. В конце текста добавить раздел с тегами:
+
+#тег1 #тег2 #тег3 #tag1_es #tag2_es #tag3_es
+
+(Где тег1, тег2, тег3 - это теги на русском языке, а tag1_es, tag2_es, tag3_es - перевод этих же тегов на испанский язык)
+
+ИСХОДНАЯ СТАТЬЯ:
+
+Заголовок: {article_data.get('title', '')}
+
+Текст:
+{article_data.get('text', '')}
+
+Перепиши эту статью согласно ВСЕМ указанным требованиям. Результат должен быть готов к публикации в Telegram.
+ВАЖНО:
+- Используй только простой текст без символов форматирования! Заголовок должен быть на первой строке.
+- ОБЯЗАТЕЛЬНО включи теги на русском и испанском в конце текста.
+- НЕ забудь про стиль написания: {style_description}!
+- СТРОГО соблюдай ограничение по длине: примерно {length_chars} символов для основного текста!
+"""
+        return prompt

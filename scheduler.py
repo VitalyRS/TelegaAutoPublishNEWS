@@ -12,8 +12,10 @@ logger = logging.getLogger(__name__)
 class PublicationScheduler:
     """Класс для определения времени публикации новостей"""
 
-    def __init__(self):
-        self.publish_hours = Config.get_publish_hours()
+    @property
+    def publish_hours(self):
+        """Получить часы публикации динамически из Config"""
+        return Config.get_publish_hours()
 
     def get_next_available_slot(self, is_urgent: bool = False) -> datetime:
         """

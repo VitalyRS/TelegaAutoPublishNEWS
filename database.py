@@ -516,34 +516,6 @@ class NewsDatabase:
             logger.error(f"Ошибка при удалении старых статей: {e}")
             return 0
 
-    def migrate_add_updated_at(self):
-        """
-        Миграция: добавить колонку updated_at для существующих таблиц
-        """
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Проверяем, существует ли колонка updated_at
-                cursor.execute('''
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_name='news_queue' AND column_name='updated_at'
-                ''')
-
-                if cursor.fetchone() is None:
-                    # Колонка не существует, добавляем её
-                    cursor.execute('''
-                        ALTER TABLE news_queue
-                        ADD COLUMN updated_at TIMESTAMP
-                    ''')
-                    logger.info("Миграция: колонка updated_at успешно добавлена в таблицу news_queue")
-                else:
-                    logger.info("Миграция: колонка updated_at уже существует")
-
-        except Exception as e:
-            logger.error(f"Ошибка при выполнении миграции: {e}")
-
     def close(self):
         """Закрыть все соединения в pool"""
         if self.connection_pool:

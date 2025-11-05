@@ -147,10 +147,6 @@ def start_bot():
         database = NewsDatabase()
         logger.info("База данных инициализирована")
 
-        # Выполнение миграций
-        database.migrate_add_updated_at()
-        logger.info("Миграции базы данных выполнены")
-
         # Загрузка настроек из БД (приоритет над .env)
         Config.init_from_database(database)
         logger.info("Настройки загружены из базы данных")
@@ -181,10 +177,6 @@ def start_bot_webhook():
         # Инициализация базы данных
         database = NewsDatabase()
         logger.info("База данных инициализирована")
-
-        # Выполнение миграций
-        database.migrate_add_updated_at()
-        logger.info("Миграции базы данных выполнены")
 
         # Загрузка настроек из БД (приоритет над .env)
         Config.init_from_database(database)

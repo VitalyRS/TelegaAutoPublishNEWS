@@ -17,12 +17,13 @@ class PublicationScheduler:
         """Получить часы публикации динамически из Config"""
         return Config.get_publish_hours()
 
-    def get_next_available_slot(self, is_urgent: bool = False) -> datetime:
+    def get_next_available_slot(self, is_urgent: bool = False, db=None) -> datetime:
         """
         Получить следующий доступный слот для публикации
 
         Args:
             is_urgent: Срочная новость (публикуется немедленно)
+            db: Объект базы данных для проверки занятости слотов
 
         Returns:
             Время публикации
@@ -35,20 +36,38 @@ class PublicationScheduler:
         current_date = now.date()
         current_hour = now.hour
 
-        # Ищем ближайший слот сегодня
-        for hour in self.publish_hours:
+        # Создаем список всех доступных слотов (сегодня + следующие дни)
+        available_slots = []
+
+        # Добавляем слоты на сегодня (если еще не прошли)
+        for hour in sorted(self.publish_hours):
             if hour > current_hour:
                 slot_time = datetime.combine(current_date, datetime.min.time().replace(hour=hour))
-                logger.info(f"Найден слот на сегодня: {slot_time}")
-                return slot_time
+                available_slots.append(slot_time)
 
-        # Если все слоты на сегодня заняты, берем первый слот завтрашнего дня
-        next_date = current_date + timedelta(days=1)
-        first_hour = min(self.publish_hours)
-        slot_time = datetime.combine(next_date, datetime.min.time().replace(hour=first_hour))
+        # Добавляем слоты на следующие 7 дней
+        for day_offset in range(1, 8):
+            next_date = current_date + timedelta(days=day_offset)
+            for hour in sorted(self.publish_hours):
+                slot_time = datetime.combine(next_date, datetime.min.time().replace(hour=hour))
+                available_slots.append(slot_time)
 
-        logger.info(f"Все слоты на сегодня заняты. Следующий слот: {slot_time}")
-        return slot_time
+        # Если база данных передана, ищем первый свободный слот
+        if db:
+            for slot_time in available_slots:
+                news_count = db.get_next_slot_news_count(slot_time)
+                if news_count == 0:
+                    logger.info(f"Найден свободный слот: {slot_time}")
+                    return slot_time
+
+            # Если все слоты заняты, возвращаем последний слот (через 7 дней)
+            logger.warning(f"Все слоты заняты на 7 дней вперед. Используем последний слот: {available_slots[-1]}")
+            return available_slots[-1]
+        else:
+            # Если база данных не передана, возвращаем первый доступный слот по времени
+            slot_time = available_slots[0] if available_slots else datetime.now()
+            logger.info(f"База данных не передана. Используем первый слот: {slot_time}")
+            return slot_time
 
     def get_specific_slot(self, target_date: datetime, slot_index: int = 0) -> Optional[datetime]:
         """

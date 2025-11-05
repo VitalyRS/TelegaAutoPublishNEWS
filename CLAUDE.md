@@ -256,6 +256,12 @@ The `NewsDatabase` class uses connection pooling (1-10 connections) for optimal 
 - `/publish_now <id>` - Force immediate publication of queued article
 - `/clear_queue` - Remove all pending articles
 - `/view <id>` - Preview article by ID before publication
+- `/rewrite <id>` - Rewrite article with new style and/or text length
+  - Opens interactive menu to select new style and/or length
+  - Rewrites the article through DeepSeek API with selected parameters
+  - Updates the article in database with rewritten text
+  - Useful when you want to change how an article is written without re-parsing from source
+  - Example workflow: `/rewrite 123` → select "ironic" style → confirm → article is rewritten
 
 **Configuration Management:**
 - `/config` - Show all bot configuration settings from database
@@ -276,6 +282,7 @@ The `NewsDatabase` class uses connection pooling (1-10 connections) for optimal 
 `deepseek_client.py` sends articles with system prompt defining output format:
 - Translate to Russian
 - News style formatting in selected style (informative, ironic, cynical, playful, mocking)
+- Text length control (short: ~1000 chars, medium: ~2000 chars, long: ~3000 chars)
 - Telegram Markdown (`**bold**`, `*italic*`, lists) - NO # symbols for headers
 - Paragraph structure with subheadings (using **bold** instead of #)
 - Tags in Russian and Spanish at the end of article
@@ -288,6 +295,17 @@ Article structure:
 4. Source link (added automatically in telegram_handler.py)
 
 The processed text is stored in database and published with source link footer.
+
+### Article Rewriting
+
+The `DeepSeekClient.rewrite_article()` method allows rewriting existing articles with different parameters:
+- **Purpose**: Change style or length of already processed articles without re-parsing the source
+- **Parameters**:
+  - `new_style`: Optional - change writing style (informative, ironic, cynical, playful, mocking)
+  - `text_length`: Optional - change article length (short, medium, long)
+- **Usage**: Accessed via `/rewrite <id>` command through interactive menu
+- **Implementation**: Uses original article text from database, applies new prompt with specified parameters
+- **Preserves**: Original URL, title, and source text remain unchanged
 
 ## Writing Styles
 

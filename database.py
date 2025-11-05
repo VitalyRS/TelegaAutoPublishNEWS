@@ -389,6 +389,33 @@ class NewsDatabase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def update_processed_text(self, news_id: int, new_processed_text: str) -> bool:
+        """
+        Обновить обработанный текст новости (для переписывания)
+
+        Args:
+            news_id: ID новости
+            new_processed_text: Новый обработанный текст
+
+        Returns:
+            True если успешно
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE news_queue
+                    SET processed_text = %s
+                    WHERE id = %s
+                ''', (new_processed_text, news_id))
+
+                logger.info(f"Текст новости ID={news_id} обновлен (переписан)")
+                return True
+
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении текста новости: {e}")
+            return False
+
     # === Методы для работы с настройками бота ===
 
     def get_config(self, key: str, default: Optional[str] = None) -> Optional[str]:

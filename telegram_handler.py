@@ -225,7 +225,7 @@ class TelegramHandler:
 
                 if processed_text:
                     # Определение времени публикации
-                    scheduled_time = self.scheduler.get_next_available_slot(is_urgent=is_urgent)
+                    scheduled_time = self.scheduler.get_next_available_slot(is_urgent=is_urgent, db=self.db)
 
                     # Добавление в очередь
                     news_id = self.db.add_news(

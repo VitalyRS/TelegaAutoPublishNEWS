@@ -486,12 +486,93 @@ class TelegramHandler:
             logger.error(f"Ошибка в команде /status: {e}")
             self.bot.reply_to(message, "Ошибка при получении статуса")
 
+    def _get_queue_page(self, page: int = 0):
+        """
+        Получить страницу очереди с новостями
+
+        Args:
+            page: Номер страницы (начиная с 0)
+
+        Returns:
+            tuple: (queue_text, keyboard) или (None, None) если нет новостей
+        """
+        news_list = self.db.get_pending_news()
+
+        if not news_list:
+            return None, None
+
+        # Параметры пагинации
+        items_per_page = 5
+        total_items = len(news_list)
+        total_pages = (total_items + items_per_page - 1) // items_per_page  # Округление вверх
+
+        # Проверка корректности номера страницы
+        if page < 0:
+            page = 0
+        elif page >= total_pages:
+            page = total_pages - 1
+
+        # Вычисляем индексы для текущей страницы
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, total_items)
+
+        # Формируем текст
+        queue_text = f"📋 Новости в очереди: {total_items}\n"
+        queue_text += f"📄 Страница {page + 1} из {total_pages}\n\n"
+
+        # Добавляем новости текущей страницы
+        for idx, news in enumerate(news_list[start_idx:end_idx], start=start_idx + 1):
+            urgent_mark = "🔥 " if news['is_urgent'] else ""
+            queue_text += f"{idx}. {urgent_mark}ID {news['id']}: {news['title'][:60]}...\n"
+            queue_text += f"   ⏰ {news['scheduled_time']}\n"
+            queue_text += f"   🔗 {news['url'][:50]}...\n\n"
+
+        # Создаем inline клавиатуру
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+
+        # Добавляем кнопки для каждой новости на странице
+        for news in news_list[start_idx:end_idx]:
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    f"👁️ Просмотр #{news['id']}",
+                    callback_data=f"view_{news['id']}"
+                ),
+                types.InlineKeyboardButton(
+                    f"🚀 Опубликовать #{news['id']}",
+                    callback_data=f"publish_confirm_{news['id']}"
+                )
+            )
+
+        # Добавляем кнопки навигации
+        nav_buttons = []
+
+        if page > 0:
+            nav_buttons.append(
+                types.InlineKeyboardButton("◀️ Назад", callback_data=f"queue_page:{page - 1}")
+            )
+
+        if page < total_pages - 1:
+            nav_buttons.append(
+                types.InlineKeyboardButton("Далее ▶️", callback_data=f"queue_page:{page + 1}")
+            )
+
+        if nav_buttons:
+            keyboard.row(*nav_buttons)
+
+        # Добавляем кнопки управления
+        keyboard.add(
+            types.InlineKeyboardButton("🔄 Обновить", callback_data="queue_page:0"),
+            types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status")
+        )
+
+        return queue_text, keyboard
+
     def _cmd_queue(self, message: types.Message):
         """Команда /queue"""
         try:
-            news_list = self.db.get_pending_news()
+            queue_text, keyboard = self._get_queue_page(page=0)
 
-            if not news_list:
+            if queue_text is None:
                 keyboard = types.InlineKeyboardMarkup(row_width=2)
                 keyboard.add(
                     types.InlineKeyboardButton("🔄 Обновить", callback_data="cmd_queue"),
@@ -499,45 +580,6 @@ class TelegramHandler:
                 )
                 self.bot.reply_to(message, "Очередь пуста", reply_markup=keyboard)
                 return
-
-            queue_text = f"📋 Новости в очереди ({len(news_list)}):\n\n"
-
-            # Создаем inline клавиатуру с кнопками для первых 10 новостей
-            keyboard = types.InlineKeyboardMarkup(row_width=2)
-
-            for idx, news in enumerate(news_list[:10]):  # Показываем максимум 10 с кнопками
-                urgent_mark = "🔥 " if news['is_urgent'] else ""
-                queue_text += f"{urgent_mark}ID {news['id']}: {news['title'][:60]}...\n"
-                queue_text += f"   ⏰ {news['scheduled_time']}\n"
-                queue_text += f"   🔗 {news['url'][:50]}...\n\n"
-
-                # Добавляем кнопки для каждой новости
-                keyboard.add(
-                    types.InlineKeyboardButton(
-                        f"👁️ Просмотр #{news['id']}",
-                        callback_data=f"view_{news['id']}"
-                    ),
-                    types.InlineKeyboardButton(
-                        f"🚀 Опубликовать #{news['id']}",
-                        callback_data=f"publish_confirm_{news['id']}"
-                    )
-                )
-
-            # Показываем оставшиеся новости без кнопок
-            for news in news_list[10:20]:
-                urgent_mark = "🔥 " if news['is_urgent'] else ""
-                queue_text += f"{urgent_mark}ID {news['id']}: {news['title'][:60]}...\n"
-                queue_text += f"   ⏰ {news['scheduled_time']}\n"
-                queue_text += f"   🔗 {news['url'][:50]}...\n\n"
-
-            if len(news_list) > 20:
-                queue_text += f"\n... и еще {len(news_list) - 20} новостей"
-
-            # Добавляем кнопки управления
-            keyboard.add(
-                types.InlineKeyboardButton("🔄 Обновить", callback_data="cmd_queue"),
-                types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status")
-            )
 
             self.bot.reply_to(message, queue_text, parse_mode=None, reply_markup=keyboard)
 
@@ -1241,8 +1283,12 @@ class TelegramHandler:
                     )
                     return
 
+            # Обработка пагинации очереди
+            if call.data.startswith("queue_page:"):
+                page = int(call.data.replace("queue_page:", ""))
+                self._handle_queue_page_callback(call, page)
             # Обработка просмотра новостей
-            if call.data.startswith("view_"):
+            elif call.data.startswith("view_"):
                 news_id = int(call.data.replace("view_", ""))
                 self._handle_view_callback(call, news_id)
             # Обработка публикации
@@ -1956,6 +2002,46 @@ class TelegramHandler:
         except Exception as e:
             logger.error(f"Ошибка при просмотре новости через callback: {e}")
             self.bot.answer_callback_query(call.id, "Ошибка при просмотре")
+
+    def _handle_queue_page_callback(self, call, page: int):
+        """Обработка навигации по страницам очереди"""
+        try:
+            logger.info(f"Переход на страницу очереди: {page}")
+
+            queue_text, keyboard = self._get_queue_page(page=page)
+
+            if queue_text is None:
+                keyboard = types.InlineKeyboardMarkup(row_width=2)
+                keyboard.add(
+                    types.InlineKeyboardButton("🔄 Обновить", callback_data="cmd_queue"),
+                    types.InlineKeyboardButton("📊 Статус", callback_data="cmd_status")
+                )
+                queue_text = "Очередь пуста"
+
+            # Редактируем существующее сообщение
+            try:
+                self.bot.edit_message_text(
+                    queue_text,
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    parse_mode=None,
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                logger.warning(f"Не удалось отредактировать сообщение: {e}")
+                # Если не удалось отредактировать, отправляем новое
+                self.bot.send_message(
+                    call.message.chat.id,
+                    queue_text,
+                    parse_mode=None,
+                    reply_markup=keyboard
+                )
+
+            self.bot.answer_callback_query(call.id)
+
+        except Exception as e:
+            logger.error(f"Ошибка при навигации по очереди: {e}")
+            self.bot.answer_callback_query(call.id, "Ошибка при переключении страницы")
 
     def _show_publish_confirmation(self, call, news_id: int):
         """Показать подтверждение публикации"""

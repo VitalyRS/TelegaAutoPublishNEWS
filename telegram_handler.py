@@ -118,6 +118,10 @@ class TelegramHandler:
         def cmd_rewrite(message):
             self._cmd_rewrite(message)
 
+        @self.bot.message_handler(commands=['webhook_info', 'webhookinfo'])
+        def cmd_webhook_info(message):
+            self._cmd_webhook_info(message)
+
         # Callback обработчик для inline кнопок
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_query(call):
@@ -963,6 +967,89 @@ class TelegramHandler:
         except Exception as e:
             logger.error(f"Ошибка в команде /config: {e}")
             self.bot.reply_to(message, "Ошибка при выполнении команды")
+
+    def _cmd_webhook_info(self, message: types.Message):
+        """Команда /webhook_info - показать информацию о webhook"""
+        try:
+            user_id = str(message.from_user.id)
+            logger.info(f"Команда /webhook_info от пользователя ID: {user_id}")
+
+            # Проверка прав администратора
+            if Config.ADMIN_USER_ID:
+                if user_id != Config.ADMIN_USER_ID:
+                    logger.warning(f"Отказано в доступе для пользователя {user_id}")
+                    self.bot.reply_to(
+                        message,
+                        f"❌ У вас нет прав для выполнения этой команды\n"
+                        f"Ваш ID: {user_id}"
+                    )
+                    return
+            else:
+                logger.warning("ADMIN_USER_ID не установлен в конфиге - команда доступна всем!")
+
+            # Получаем информацию о webhook
+            webhook_info = self.bot.get_webhook_info()
+
+            # Формируем сообщение
+            info_text = "🌐 <b>Информация о Webhook:</b>\n\n"
+
+            if webhook_info.url:
+                info_text += f"<b>URL:</b> <code>{webhook_info.url}</code>\n"
+                info_text += f"<b>Статус:</b> ✅ Активен\n\n"
+
+                # Проверяем соответствие с конфигурацией
+                expected_url = Config.WEBHOOK_URL + Config.WEBHOOK_PATH if Config.WEBHOOK_URL else None
+                if expected_url and webhook_info.url != expected_url:
+                    info_text += f"⚠️ <b>ВНИМАНИЕ:</b> URL не совпадает с .env!\n"
+                    info_text += f"Ожидается: <code>{expected_url}</code>\n\n"
+            else:
+                info_text += "<b>Статус:</b> ❌ Не установлен\n\n"
+                if Config.WEBHOOK_URL:
+                    expected_url = Config.WEBHOOK_URL + Config.WEBHOOK_PATH
+                    info_text += f"Ожидаемый URL из .env:\n<code>{expected_url}</code>\n\n"
+
+            info_text += f"<b>Проверка сертификата:</b> {'Да' if webhook_info.has_custom_certificate else 'Нет'}\n"
+            info_text += f"<b>Ожидающих обновлений:</b> {webhook_info.pending_update_count}\n"
+
+            if webhook_info.max_connections:
+                info_text += f"<b>Макс. соединений:</b> {webhook_info.max_connections}\n"
+
+            if webhook_info.allowed_updates:
+                info_text += f"<b>Типы обновлений:</b> {', '.join(webhook_info.allowed_updates)}\n"
+
+            # Информация об ошибках
+            if webhook_info.last_error_date:
+                from datetime import datetime
+                error_date = datetime.fromtimestamp(webhook_info.last_error_date)
+                info_text += f"\n⚠️ <b>Последняя ошибка:</b>\n"
+                info_text += f"Дата: {error_date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                info_text += f"Сообщение: {webhook_info.last_error_message}\n"
+
+            if webhook_info.last_synchronization_error_date:
+                from datetime import datetime
+                sync_error_date = datetime.fromtimestamp(webhook_info.last_synchronization_error_date)
+                info_text += f"\n⚠️ <b>Ошибка синхронизации:</b>\n"
+                info_text += f"Дата: {sync_error_date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+
+            # Добавляем подсказки
+            if not webhook_info.url:
+                info_text += "\n💡 <b>Для установки webhook:</b>\n"
+                info_text += "1. Запустите бот: <code>python app.py webhook</code>\n"
+                info_text += "2. Или используйте: <code>python setup_webhook.py set</code>"
+            else:
+                info_text += "\n💡 <b>Для проверки webhook:</b>\n"
+                info_text += "<code>python setup_webhook.py info</code>"
+
+            self.bot.reply_to(message, info_text, parse_mode='HTML')
+            logger.info("Информация о webhook отправлена")
+
+        except Exception as e:
+            logger.error(f"Ошибка в команде /webhook_info: {e}", exc_info=True)
+            self.bot.reply_to(
+                message,
+                "❌ Ошибка при получении информации о webhook\n"
+                f"Подробности: {str(e)}"
+            )
 
     def _cmd_set_config(self, message: types.Message):
         """Команда /set_config <key> <value> - установить настройку"""
@@ -2276,29 +2363,71 @@ class TelegramHandler:
             raise ValueError("WEBHOOK_URL не установлен в конфигурации")
 
         webhook_url = Config.WEBHOOK_URL + Config.WEBHOOK_PATH
-        logger.info(f"Установка webhook: {webhook_url}")
+
+        logger.info("=" * 60)
+        logger.info("🔧 АВТОМАТИЧЕСКАЯ УСТАНОВКА WEBHOOK")
+        logger.info("=" * 60)
+        logger.info(f"📍 Webhook URL: {webhook_url}")
+        logger.info(f"📍 Базовый URL: {Config.WEBHOOK_URL}")
+        logger.info(f"📍 Путь: {Config.WEBHOOK_PATH}")
 
         try:
+            # Удаляем предыдущий webhook если был
+            logger.info("🗑️  Удаление предыдущего webhook...")
             self.bot.remove_webhook()
-            logger.info("Предыдущий webhook удален")
+            logger.info("✅ Предыдущий webhook удален")
 
-            # Устанавливаем webhook
+            # Устанавливаем новый webhook
+            logger.info("⚙️  Установка нового webhook...")
             self.bot.set_webhook(
                 url=webhook_url,
                 drop_pending_updates=False  # Не пропускаем ожидающие обновления
             )
 
             # Проверяем установку
+            logger.info("🔍 Проверка установки webhook...")
             webhook_info = self.bot.get_webhook_info()
-            logger.info(f"Webhook установлен успешно: {webhook_info.url}")
-            logger.info(f"Ожидающих обновлений: {webhook_info.pending_update_count}")
 
+            logger.info("=" * 60)
+            logger.info("✅ WEBHOOK УСТАНОВЛЕН УСПЕШНО!")
+            logger.info("=" * 60)
+            logger.info(f"📌 URL: {webhook_info.url}")
+            logger.info(f"📌 Ожидающих обновлений: {webhook_info.pending_update_count}")
+
+            if webhook_info.has_custom_certificate:
+                logger.info(f"📌 Используется пользовательский сертификат")
+
+            if webhook_info.max_connections:
+                logger.info(f"📌 Макс. соединений: {webhook_info.max_connections}")
+
+            # Проверяем наличие ошибок
             if webhook_info.last_error_date:
-                logger.warning(f"Последняя ошибка webhook: {webhook_info.last_error_message}")
+                from datetime import datetime
+                error_date = datetime.fromtimestamp(webhook_info.last_error_date)
+                logger.warning("=" * 60)
+                logger.warning("⚠️  ОБНАРУЖЕНА ПРЕДЫДУЩАЯ ОШИБКА WEBHOOK")
+                logger.warning(f"⚠️  Дата: {error_date.strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.warning(f"⚠️  Сообщение: {webhook_info.last_error_message}")
+                logger.warning("=" * 60)
+
+            logger.info("=" * 60)
+            logger.info("💡 Webhook готов принимать обновления от Telegram")
+            logger.info("💡 Используйте /webhook_info для проверки статуса")
+            logger.info("=" * 60)
 
             return True
+
         except Exception as e:
-            logger.error(f"Ошибка при установке webhook: {e}")
+            logger.error("=" * 60)
+            logger.error("❌ ОШИБКА ПРИ УСТАНОВКЕ WEBHOOK")
+            logger.error("=" * 60)
+            logger.error(f"❌ {type(e).__name__}: {e}")
+            logger.error("💡 Возможные причины:")
+            logger.error("   1. WEBHOOK_URL не является HTTPS адресом")
+            logger.error("   2. Домен недоступен из интернета")
+            logger.error("   3. Неверный токен бота")
+            logger.error("   4. Проблемы с SSL сертификатом")
+            logger.error("=" * 60)
             raise
 
     def start_webhook(self):

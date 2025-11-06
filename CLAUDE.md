@@ -84,13 +84,38 @@ server {
 }
 ```
 
-**Testing webhook:**
+**Автоматическая установка webhook:**
+Bot автоматически устанавливает webhook при запуске в режиме webhook. Просто запустите:
 ```bash
-# Start bot in webhook mode
 python app.py webhook
+```
 
-# Check webhook status
+Бот автоматически:
+1. Удалит предыдущий webhook (если был)
+2. Установит новый webhook на URL из .env
+3. Проверит статус установки
+4. Выведет подробную информацию в лог
+
+**Ручное управление webhook (опционально):**
+Используйте утилиту `setup_webhook.py` для ручной проверки и установки:
+```bash
+# Проверить статус webhook
+python setup_webhook.py info
+
+# Установить webhook вручную
+python setup_webhook.py set
+
+# Удалить webhook
+python setup_webhook.py delete
+```
+
+**Проверка через Telegram API:**
+```bash
+# Получить информацию о webhook
 curl https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo
+
+# Установить webhook вручную (если нужно)
+curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=https://your-domain.com/webhook"
 ```
 
 ## Technology Stack
@@ -271,6 +296,10 @@ The `NewsDatabase` class uses connection pooling (1-10 connections) for optimal 
 - `/reload_config` - Reload configuration from database without restart
 - `/set_style <style>` - Change article writing style (shortcut for `/set_config ARTICLE_STYLE`)
   - Available styles: informative, ironic, cynical, playful, mocking
+- `/webhook_info` - Check webhook status and configuration
+  - Shows current webhook URL, pending updates, errors
+  - Compares webhook URL with .env configuration
+  - Provides troubleshooting hints
 
 ### Public commands:
 - `/status` - Queue statistics and next publication time

@@ -9,6 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from config import Config
 from database import NewsDatabase
 from telegram_handler import TelegramHandler
+from timezone_utils import MADRID_TZ
 
 # Настройка логирования
 logging.basicConfig(
@@ -102,25 +103,26 @@ def setup_scheduler():
     """Настройка планировщика публикаций и обслуживания"""
     global scheduler
 
-    scheduler = BackgroundScheduler()
+    # Создаем планировщик с timezone Мадрида
+    scheduler = BackgroundScheduler(timezone=MADRID_TZ)
 
     # Получаем часы публикации из конфига
     publish_hours = Config.get_publish_hours()
 
     # Добавляем задачу для каждого часа публикации
     for hour in publish_hours:
-        # Запускаем задачу в начале каждого часа (в первую минуту)
-        trigger = CronTrigger(hour=hour, minute=0)
+        # Запускаем задачу в начале каждого часа (в первую минуту) по времени Мадрида
+        trigger = CronTrigger(hour=hour, minute=0, timezone=MADRID_TZ)
         scheduler.add_job(
             publish_news_job,
             trigger=trigger,
             id=f'publish_news_{hour}',
-            name=f'Публикация новостей в {hour}:00',
+            name=f'Публикация новостей в {hour}:00 (Madrid)',
             replace_existing=True
         )
-        logger.info(f"Добавлена задача публикации на {hour}:00")
-    # Добавляем задачу очистки старых статей (запуск каждый день в 3:00)
-    cleanup_trigger = CronTrigger(hour=3, minute=0)
+        logger.info(f"Добавлена задача публикации на {hour}:00 (Madrid time)")
+    # Добавляем задачу очистки старых статей (запуск каждый день в 3:00 по времени Мадрида)
+    cleanup_trigger = CronTrigger(hour=3, minute=0, timezone=MADRID_TZ)
     scheduler.add_job(
         cleanup_old_news_job,
         trigger=cleanup_trigger,
@@ -128,10 +130,10 @@ def setup_scheduler():
         name='Очистка старых опубликованных статей',
         replace_existing=True
     )
-    logger.info("Добавлена задача очистки старых статей на 3:00 каждый день")
+    logger.info("Добавлена задача очистки старых статей на 3:00 (Madrid time)")
 
     scheduler.start()
-    logger.info("Планировщик запущен")
+    logger.info("Планировщик запущен с timezone: Europe/Madrid")
 
 
 def start_bot():

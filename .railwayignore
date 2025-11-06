@@ -1,0 +1,51 @@
+# Environment files (will be set via Railway Variables)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+bot.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation (optional, uncomment if you want to exclude)
+# *.md
+# README.md
+
+# Test files (if any)
+tests/
+test_*.py
+*_test.py
+
+# Development files
+.pytest_cache/
+.coverage
+htmlcov/

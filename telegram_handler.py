@@ -11,6 +11,7 @@ from telebot import types
 from config import Config
 from database import NewsDatabase
 from scheduler import PublicationScheduler
+from timezone_utils import to_madrid_tz
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +250,8 @@ class TelegramHandler:
                             logger.info(f"Срочная новость! Публикуем немедленно: {article_data.get('title')}")
                             self.publish_news_by_id(news_id)
                         else:
-                            logger.info(f"Новость добавлена в очередь. Публикация: {scheduled_time}")
+                            madrid_time = to_madrid_tz(scheduled_time)
+                            logger.info(f"Новость добавлена в очередь. Публикация: {madrid_time.strftime('%Y-%m-%d %H:%M %Z')}")
                 else:
                     logger.error(f"Не удалось обработать статью: {url}")
 
@@ -474,7 +476,8 @@ class TelegramHandler:
                 status_text += "\n\n📰 Следующие новости:\n"
                 for news in stats['next_news']:
                     urgent_mark = "🔥 " if news['is_urgent'] else ""
-                    status_text += f"{urgent_mark}{news['id']}. {news['title'][:50]}... ({news['scheduled_time']})\n"
+                    madrid_time = to_madrid_tz(news['scheduled_time']).strftime('%Y-%m-%d %H:%M')
+                    status_text += f"{urgent_mark}{news['id']}. {news['title'][:50]}... ({madrid_time})\n"
 
             # Создаем inline клавиатуру
             keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -529,8 +532,9 @@ class TelegramHandler:
         # Добавляем новости текущей страницы
         for idx, news in enumerate(news_list[start_idx:end_idx], start=start_idx + 1):
             urgent_mark = "🔥 " if news['is_urgent'] else ""
+            madrid_time = to_madrid_tz(news['scheduled_time']).strftime('%Y-%m-%d %H:%M')
             queue_text += f"{idx}. {urgent_mark}ID {news['id']}: {news['title'][:60]}...\n"
-            queue_text += f"   ⏰ {news['scheduled_time']}\n"
+            queue_text += f"   ⏰ {madrid_time}\n"
             queue_text += f"   🔗 {news['url'][:50]}...\n\n"
 
         # Создаем inline клавиатуру
@@ -861,8 +865,22 @@ class TelegramHandler:
             }
             status = news.get('status', 'unknown')
             status_text = f"{status_emoji.get(status, '❓')} Статус: {status}\n"
-            scheduled_text = f"⏰ Запланировано: {news.get('scheduled_time', 'не указано')}\n"
-            updated_text = f"✏️ Изменено: {news.get('updated_at', 'не изменялось')}\n" if news.get('updated_at') else ""
+
+            # Форматируем scheduled_time с timezone Мадрида
+            scheduled_time = news.get('scheduled_time')
+            if scheduled_time:
+                madrid_time = to_madrid_tz(scheduled_time).strftime('%Y-%m-%d %H:%M')
+                scheduled_text = f"⏰ Запланировано: {madrid_time}\n"
+            else:
+                scheduled_text = "⏰ Запланировано: не указано\n"
+
+            # Форматируем updated_at если есть
+            updated_at = news.get('updated_at')
+            if updated_at:
+                madrid_updated = to_madrid_tz(updated_at).strftime('%Y-%m-%d %H:%M')
+                updated_text = f"✏️ Изменено: {madrid_updated}\n"
+            else:
+                updated_text = ""
 
             info_text = f"ID: {news_id}\n{status_text}{scheduled_text}{updated_text}\n{'='*30}\n\n"
 
@@ -2034,8 +2052,22 @@ class TelegramHandler:
             }
             status = news.get('status', 'unknown')
             status_text = f"{status_emoji.get(status, '❓')} Статус: {status}\n"
-            scheduled_text = f"⏰ Запланировано: {news.get('scheduled_time', 'не указано')}\n"
-            updated_text = f"✏️ Изменено: {news.get('updated_at', 'не изменялось')}\n" if news.get('updated_at') else ""
+
+            # Форматируем scheduled_time с timezone Мадрида
+            scheduled_time = news.get('scheduled_time')
+            if scheduled_time:
+                madrid_time = to_madrid_tz(scheduled_time).strftime('%Y-%m-%d %H:%M')
+                scheduled_text = f"⏰ Запланировано: {madrid_time}\n"
+            else:
+                scheduled_text = "⏰ Запланировано: не указано\n"
+
+            # Форматируем updated_at если есть
+            updated_at = news.get('updated_at')
+            if updated_at:
+                madrid_updated = to_madrid_tz(updated_at).strftime('%Y-%m-%d %H:%M')
+                updated_text = f"✏️ Изменено: {madrid_updated}\n"
+            else:
+                updated_text = ""
 
             info_text = f"ID: {news_id}\n{status_text}{scheduled_text}{updated_text}\n{'='*30}\n\n"
 

@@ -83,12 +83,12 @@ class NewsDatabase:
                     title TEXT,
                     original_text TEXT,
                     processed_text TEXT,
-                    scheduled_time TIMESTAMP,
+                    scheduled_time TIMESTAMP WITH TIME ZONE,
                     status TEXT DEFAULT 'pending',
                     is_urgent BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    published_at TIMESTAMP,
-                    updated_at TIMESTAMP
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    published_at TIMESTAMP WITH TIME ZONE,
+                    updated_at TIMESTAMP WITH TIME ZONE
                 )
             ''')
 
@@ -123,7 +123,7 @@ class NewsDatabase:
                 CREATE TABLE IF NOT EXISTS bot_config (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
 

@@ -189,9 +189,22 @@ Articles containing keywords from `URGENT_KEYWORDS` (`молния`, `breaking` 
 ### Configurable Settings (stored in database)
 - `PUBLISH_SCHEDULE=8,12,16,20` - Comma-separated hours (24h format)
 - `URGENT_KEYWORDS=молния,breaking` - Keywords for immediate publishing
-- `MAX_ARTICLES_PER_RUN=5` - Max articles to process per channel message
+- `MAX_ARTICLES_PER_RUN=5` - **Maximum articles to process per channel message**
+  - Limits how many URLs from a single channel post will be processed
+  - If a message contains 10 links but MAX_ARTICLES_PER_RUN=5, only first 5 will be parsed
+  - Protects against overload when someone posts many links at once
+  - Each article goes through: parsing → DeepSeek processing → database insertion
+  - Higher values increase processing time and API costs
+  - Recommended: 3-10 depending on your DeepSeek API limits and server resources
+  - Change via: `/set_config MAX_ARTICLES_PER_RUN 10`
 - `ARTICLE_STYLE=informative` - Writing style (informative, ironic, cynical, playful, mocking)
-- `CHECK_INTERVAL=60` - Interval for background checks (seconds)
+- `CHECK_INTERVAL=60` - **Interval for background checks (seconds)** [Legacy setting]
+  - Originally used for periodic background tasks in earlier versions
+  - Current implementation uses APScheduler with PUBLISH_SCHEDULE for timed publications
+  - Retained in configuration for backward compatibility
+  - Does not affect current bot operation
+  - Bot now triggers publications via cron-based scheduler (see PUBLISH_SCHEDULE)
+  - You can safely ignore this setting unless using custom background task implementations
 
 ### Managing Configuration
 - Use `/config` to view current settings from database

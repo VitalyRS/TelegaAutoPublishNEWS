@@ -28,13 +28,24 @@
 5. Выберите ваш репозиторий с ботом
 6. Railway автоматически определит Python приложение и начнет сборку
 
-### 2. Настройка PostgreSQL базы данных
+### 2. Подключение к существующей базе данных Aiven
 
-Railway предоставляет встроенный PostgreSQL:
+Бот использует вашу существующую PostgreSQL базу данных на Aiven:
 
-1. В проекте нажмите **New** → **Database** → **Add PostgreSQL**
-2. Railway автоматически создаст переменную `DATABASE_URL`
-3. Эта переменная будет доступна вашему приложению автоматически
+1. Откройте [Aiven Console](https://console.aiven.io/)
+2. Выберите ваш PostgreSQL сервис
+3. Скопируйте **Service URI** из раздела Connection Information
+4. Добавьте эту строку подключения в переменные окружения Railway как `DATABASE_URL`
+
+**Формат Service URI:**
+```
+postgresql://user:password@host:port/defaultdb?sslmode=require
+```
+
+**Важно:**
+- Railway НЕ нужно создавать новую базу данных
+- Используется существующая база данных Aiven
+- Убедитесь, что в строке подключения указан параметр `sslmode=require`
 
 ### 3. Настройка переменных окружения
 
@@ -54,6 +65,9 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxx  # от platform.deepseek.com
 # Admin User
 ADMIN_USER_ID=123456789  # ваш Telegram user ID
 
+# Aiven PostgreSQL Database
+DATABASE_URL=postgresql://user:password@your-aiven-host.aivencloud.com:12345/defaultdb?sslmode=require
+
 # Webhook Configuration
 WEBHOOK_URL=https://your-app-name.up.railway.app  # URL вашего Railway приложения
 WEBHOOK_PATH=/webhook
@@ -71,7 +85,9 @@ MAX_ARTICLES_PER_RUN=5
 CHECK_INTERVAL=60
 ```
 
-**Важно**: `DATABASE_URL` будет создана автоматически при добавлении PostgreSQL базы.
+**Важно**:
+- `DATABASE_URL` должен содержать строку подключения к вашей Aiven базе данных
+- `PORT` устанавливается Railway автоматически - не указывайте вручную
 
 ### 4. Настройка домена и HTTPS
 
@@ -141,15 +157,18 @@ Railway предоставляет:
 
 ## Расчет стоимости
 
-Railway предоставляет:
+**Railway:**
 - **Hobby план**: $5/месяц за проект + ресурсы
 - **$5 бесплатно** каждый месяц для новых пользователей
-- PostgreSQL база включена в стоимость
+- Примерное потребление бота:
+  - ~0.1-0.5 vCPU
+  - ~100-300 MB RAM
+  - ~1-5 GB сетевого трафика
 
-**Примерное потребление для этого бота:**
-- ~0.1-0.5 vCPU
-- ~100-300 MB RAM
-- ~1-5 GB сетевого трафика
+**Aiven PostgreSQL:**
+- Стоимость зависит от выбранного плана
+- Управляется отдельно от Railway
+- См. [Aiven Pricing](https://aiven.io/pricing) для деталей
 
 ## Troubleshooting
 
@@ -164,9 +183,11 @@ Railway предоставляет:
 ### Проблема: База данных не подключается
 
 **Решение:**
-1. Проверьте, что PostgreSQL база добавлена в проект
-2. Проверьте наличие переменной `DATABASE_URL` в Variables
-3. Проверьте логи на ошибки подключения к БД
+1. Проверьте правильность строки подключения `DATABASE_URL` в Railway Variables
+2. Убедитесь, что Aiven база данных доступна и работает
+3. Проверьте, что в строке подключения указан параметр `sslmode=require`
+4. Проверьте логи Railway на ошибки подключения к БД
+5. Убедитесь, что IP адрес Railway не заблокирован в настройках Aiven (если есть IP whitelist)
 
 ### Проблема: Бот не отвечает на команды
 
@@ -186,6 +207,8 @@ Railway предоставляет:
 
 - [Railway Documentation](https://docs.railway.app/)
 - [Railway Python Guide](https://docs.railway.app/guides/python)
+- [Aiven Console](https://console.aiven.io/) - управление PostgreSQL базой данных
+- [Aiven Documentation](https://docs.aiven.io/)
 - [Telegram Bot API - Webhooks](https://core.telegram.org/bots/api#setwebhook)
 - [DeepSeek API Documentation](https://platform.deepseek.com/api-docs/)
 

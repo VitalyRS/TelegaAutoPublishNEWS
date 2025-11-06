@@ -161,7 +161,7 @@ class TelegramHandler:
             if urls:
                 logger.info(f"Найдено {len(urls)} ссылок: {urls}")
                 # Обработка URL в отдельном потоке чтобы не блокировать бота
-                thread = threading.Thread(target=self._process_urls, args=(urls,))
+                thread = threading.Thread(target=self._process_urls, args=(urls, message.text))
                 thread.start()
             else:
                 logger.info("В сообщении не найдено ссылок")
@@ -201,12 +201,13 @@ class TelegramHandler:
                 return True
         return False
 
-    def _process_urls(self, urls: List[str]):
+    def _process_urls(self, urls: List[str], channel_message_text: str = ""):
         """
         Обработка найденных URL
 
         Args:
             urls: Список URL для обработки
+            channel_message_text: Текст сообщения из канала (для проверки срочности)
         """
         from news_parser import NewsParser
 
@@ -221,8 +222,9 @@ class TelegramHandler:
                     logger.warning(f"Статья не прошла валидацию: {url}")
                     continue
 
-                # Проверка срочности
-                is_urgent = self.is_urgent_news(article_data.get('title', '') + ' ' + article_data.get('text', ''))
+                # Проверка срочности - сначала в тексте сообщения канала, затем в содержимом статьи
+                is_urgent = self.is_urgent_news(channel_message_text) or \
+                           self.is_urgent_news(article_data.get('title', '') + ' ' + article_data.get('text', ''))
 
                 # Обработка через DeepSeek с текущим стилем
                 processed_text = self.deepseek.process_article(article_data)

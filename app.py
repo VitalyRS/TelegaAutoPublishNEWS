@@ -119,7 +119,6 @@ def setup_scheduler():
             replace_existing=True
         )
         logger.info(f"Добавлена задача публикации на {hour}:00")
-
     # Добавляем задачу очистки старых статей (запуск каждый день в 3:00)
     cleanup_trigger = CronTrigger(hour=3, minute=0)
     scheduler.add_job(

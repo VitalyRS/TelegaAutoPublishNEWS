@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from config import Config
+from timezone_utils import now_madrid, MADRID_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +27,13 @@ class PublicationScheduler:
             db: Объект базы данных для проверки занятости слотов
 
         Returns:
-            Время публикации
+            Время публикации (с timezone Мадрида)
         """
         if is_urgent:
             # Срочные новости публикуются немедленно
-            return datetime.now()
+            return now_madrid()
 
-        now = datetime.now()
+        now = now_madrid()
         current_date = now.date()
         current_hour = now.hour
 
@@ -42,14 +43,14 @@ class PublicationScheduler:
         # Добавляем слоты на сегодня (если еще не прошли)
         for hour in sorted(self.publish_hours):
             if hour > current_hour:
-                slot_time = datetime.combine(current_date, datetime.min.time().replace(hour=hour))
+                slot_time = datetime.combine(current_date, datetime.min.time().replace(hour=hour), tzinfo=MADRID_TZ)
                 available_slots.append(slot_time)
 
         # Добавляем слоты на следующие 7 дней
         for day_offset in range(1, 8):
             next_date = current_date + timedelta(days=day_offset)
             for hour in sorted(self.publish_hours):
-                slot_time = datetime.combine(next_date, datetime.min.time().replace(hour=hour))
+                slot_time = datetime.combine(next_date, datetime.min.time().replace(hour=hour), tzinfo=MADRID_TZ)
                 available_slots.append(slot_time)
 
         # Если база данных передана, ищем первый свободный слот
@@ -65,7 +66,7 @@ class PublicationScheduler:
             return available_slots[-1]
         else:
             # Если база данных не передана, возвращаем первый доступный слот по времени
-            slot_time = available_slots[0] if available_slots else datetime.now()
+            slot_time = available_slots[0] if available_slots else now_madrid()
             logger.info(f"База данных не передана. Используем первый слот: {slot_time}")
             return slot_time
 
@@ -78,14 +79,14 @@ class PublicationScheduler:
             slot_index: Индекс слота (0 = первый слот дня)
 
         Returns:
-            Время слота или None
+            Время слота или None (с timezone Мадрида)
         """
         if slot_index >= len(self.publish_hours):
             logger.warning(f"Неверный индекс слота: {slot_index}")
             return None
 
         hour = sorted(self.publish_hours)[slot_index]
-        slot_time = datetime.combine(target_date.date(), datetime.min.time().replace(hour=hour))
+        slot_time = datetime.combine(target_date.date(), datetime.min.time().replace(hour=hour), tzinfo=MADRID_TZ)
 
         return slot_time
 
@@ -97,11 +98,11 @@ class PublicationScheduler:
             target_date: Целевая дата
 
         Returns:
-            Список времен слотов
+            Список времен слотов (с timezone Мадрида)
         """
         slots = []
         for hour in sorted(self.publish_hours):
-            slot_time = datetime.combine(target_date.date(), datetime.min.time().replace(hour=hour))
+            slot_time = datetime.combine(target_date.date(), datetime.min.time().replace(hour=hour), tzinfo=MADRID_TZ)
             slots.append(slot_time)
 
         return slots
@@ -111,13 +112,13 @@ class PublicationScheduler:
         Проверить, является ли текущее время временем публикации
 
         Args:
-            check_time: Время для проверки (если None - текущее время)
+            check_time: Время для проверки (если None - текущее время Мадрида)
 
         Returns:
             True если время публикации
         """
         if check_time is None:
-            check_time = datetime.now()
+            check_time = now_madrid()
 
         current_hour = check_time.hour
         current_minute = check_time.minute
@@ -137,9 +138,9 @@ class PublicationScheduler:
             current_slot_news: Количество новостей уже в текущем слоте
 
         Returns:
-            Время публикации
+            Время публикации (с timezone Мадрида)
         """
-        now = datetime.now()
+        now = now_madrid()
         current_date = now.date()
         current_hour = now.hour
 
@@ -149,7 +150,7 @@ class PublicationScheduler:
         # Слоты на сегодня (если еще не прошли)
         for hour in sorted(self.publish_hours):
             if hour > current_hour:
-                slot_time = datetime.combine(current_date, datetime.min.time().replace(hour=hour))
+                slot_time = datetime.combine(current_date, datetime.min.time().replace(hour=hour), tzinfo=MADRID_TZ)
                 available_slots.append(slot_time)
 
         # Если слотов на сегодня не хватает, добавляем слоты на следующие дни
@@ -157,7 +158,7 @@ class PublicationScheduler:
         while len(available_slots) < news_count + current_slot_news:
             next_date = current_date + timedelta(days=days_ahead)
             for hour in sorted(self.publish_hours):
-                slot_time = datetime.combine(next_date, datetime.min.time().replace(hour=hour))
+                slot_time = datetime.combine(next_date, datetime.min.time().replace(hour=hour), tzinfo=MADRID_TZ)
                 available_slots.append(slot_time)
             days_ahead += 1
 
@@ -173,14 +174,14 @@ class PublicationScheduler:
         Получить время следующей публикации
 
         Returns:
-            Время следующей публикации
+            Время следующей публикации (с timezone Мадрида)
         """
-        now = datetime.now()
+        now = now_madrid()
         next_slots = []
 
         # Проверяем оставшиеся слоты сегодня
         for hour in sorted(self.publish_hours):
-            slot_time = datetime.combine(now.date(), datetime.min.time().replace(hour=hour))
+            slot_time = datetime.combine(now.date(), datetime.min.time().replace(hour=hour), tzinfo=MADRID_TZ)
             if slot_time > now:
                 next_slots.append(slot_time)
 
@@ -190,7 +191,7 @@ class PublicationScheduler:
         # Если слотов на сегодня нет, возвращаем первый слот завтра
         tomorrow = now.date() + timedelta(days=1)
         first_hour = min(self.publish_hours)
-        return datetime.combine(tomorrow, datetime.min.time().replace(hour=first_hour))
+        return datetime.combine(tomorrow, datetime.min.time().replace(hour=first_hour), tzinfo=MADRID_TZ)
 
     def format_schedule(self) -> str:
         """

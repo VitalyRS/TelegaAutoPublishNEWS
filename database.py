@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Optional, List, Dict
 from contextlib import contextmanager
 import os
+from timezone_utils import now_madrid
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,7 @@ class NewsDatabase:
                 AND scheduled_time <= %s
                 ORDER BY is_urgent DESC, scheduled_time ASC
                 LIMIT %s
-            ''', (datetime.now(), limit))
+            ''', (now_madrid(), limit))
 
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
@@ -245,7 +246,7 @@ class NewsDatabase:
                     UPDATE news_queue
                     SET status = 'published', published_at = %s
                     WHERE id = %s
-                ''', (datetime.now(), news_id))
+                ''', (now_madrid(), news_id))
 
                 logger.info(f"Новость ID={news_id} отмечена как опубликованная")
                 return True
@@ -408,7 +409,7 @@ class NewsDatabase:
                     UPDATE news_queue
                     SET processed_text = %s, updated_at = %s
                     WHERE id = %s
-                ''', (new_processed_text, datetime.now(), news_id))
+                ''', (new_processed_text, now_madrid(), news_id))
 
                 logger.info(f"Текст новости ID={news_id} обновлен (переписан)")
                 return True
@@ -459,7 +460,7 @@ class NewsDatabase:
                     VALUES (%s, %s, %s)
                     ON CONFLICT (key) DO UPDATE
                     SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
-                ''', (key, value, datetime.now()))
+                ''', (key, value, now_madrid()))
                 logger.info(f"Настройка {key} обновлена: {value}")
                 return True
         except Exception as e:

@@ -27,21 +27,14 @@ class NewsParser:
             article.download()
             article.parse()
 
-            # Попытка извлечь дополнительную информацию
-            try:
-                article.nlp()
-            except Exception as e:
-                logger.warning(f"Не удалось выполнить NLP обработку для {url}: {e}")
+            # NLP обработка отключена для экономии памяти (~50MB)
+            # article.nlp() использует NLTK, который не нужен для основного функционала
 
+            # Возвращаем только нужные поля (title и text используются в DeepSeek)
             result = {
                 'title': article.title,
                 'text': article.text,
-                'authors': ', '.join(article.authors) if article.authors else 'Неизвестно',
-                'publish_date': str(article.publish_date) if article.publish_date else 'Неизвестно',
-                'top_image': article.top_image,
-                'url': url,
-                'summary': article.summary if hasattr(article, 'summary') else '',
-                'keywords': ', '.join(article.keywords) if hasattr(article, 'keywords') else ''
+                'url': url
             }
 
             logger.info(f"Успешно извлечена статья: {article.title}")

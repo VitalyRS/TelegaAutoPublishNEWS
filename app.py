@@ -16,7 +16,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('bot.log'),
+        # FileHandler удален для Railway (эфемерная FS) и экономии памяти
         logging.StreamHandler()
     ]
 )

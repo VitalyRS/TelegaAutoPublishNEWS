@@ -46,7 +46,7 @@ class NewsDatabase:
         try:
             self.connection_pool = pool.SimpleConnectionPool(
                 1,  # минимум соединений
-                10, # максимум соединений
+                3,  # максимум соединений (уменьшено для экономии памяти на Railway free tier)
                 self.database_url
             )
             logger.info("Connection pool к PostgreSQL успешно создан")

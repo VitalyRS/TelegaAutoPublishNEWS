@@ -1,6 +1,4 @@
-"""
-Обработчик для работы с Telegram
-"""
+import gc
 import logging
 import re
 import threading
@@ -10,6 +8,7 @@ import telebot
 from telebot import types
 from config import Config
 from database import NewsDatabase
+from news_parser import NewsParser
 from scheduler import PublicationScheduler
 from timezone_utils import to_madrid_tz
 
@@ -162,7 +161,8 @@ class TelegramHandler:
             if urls:
                 logger.info(f"Найдено {len(urls)} ссылок: {urls}")
                 # Обработка URL в отдельном потоке чтобы не блокировать бота
-                thread = threading.Thread(target=self._process_urls, args=(urls, message.text))
+                # daemon=True позволяет потоку завершиться при остановке бота и не накапливаться в памяти
+                thread = threading.Thread(target=self._process_urls, args=(urls, message.text), daemon=True)
                 thread.start()
             else:
                 logger.info("В сообщении не найдено ссылок")
@@ -210,16 +210,12 @@ class TelegramHandler:
             urls: Список URL для обработки
             channel_message_text: Текст сообщения из канала (для проверки срочности)
         """
-        from news_parser import NewsParser
-
-        parser = NewsParser()
-
         for url in urls[:Config.MAX_ARTICLES_PER_RUN]:
             try:
-                # Парсинг статьи
-                article_data = parser.parse_article(url)
+                # Парсинг статьи (статические методы - объект не создаётся)
+                article_data = NewsParser.parse_article(url)
 
-                if not article_data or not parser.validate_article(article_data):
+                if not article_data or not NewsParser.validate_article(article_data):
                     logger.warning(f"Статья не прошла валидацию: {url}")
                     continue
 
@@ -257,6 +253,9 @@ class TelegramHandler:
 
             except Exception as e:
                 logger.error(f"Ошибка при обработке URL {url}: {e}")
+
+        # Освобождаем память после обработки статей (newspaper3k может потреблять много RAM)
+        gc.collect()
 
     def publish_news_by_id(self, news_id: int) -> bool:
         """

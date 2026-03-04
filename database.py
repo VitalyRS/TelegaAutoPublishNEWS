@@ -86,10 +86,17 @@ class NewsDatabase:
                     scheduled_time TIMESTAMP WITH TIME ZONE,
                     status TEXT DEFAULT 'pending',
                     is_urgent BOOLEAN DEFAULT FALSE,
+                    topic_id INTEGER DEFAULT NULL,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                     published_at TIMESTAMP WITH TIME ZONE,
                     updated_at TIMESTAMP WITH TIME ZONE
                 )
+            ''')
+            
+            # Миграция: добавление колонки topic_id к существующей таблице, если её нет
+            cursor.execute('''
+                ALTER TABLE news_queue 
+                ADD COLUMN IF NOT EXISTS topic_id INTEGER DEFAULT NULL
             ''')
 
             # Индексы для быстрого поиска
@@ -135,7 +142,15 @@ class NewsDatabase:
                 'ARTICLE_STYLE': 'informative',
                 'CHECK_INTERVAL': '60',
                 'TEXT_LENGTH': 'medium',  # short=1000, medium=2000, long=3000
-                'MONITOR_FROM_DATE': ''  # пустая строка = мониторить с момента запуска бота
+                'MONITOR_FROM_DATE': '',  # пустая строка = мониторить с момента запуска бота
+                'TARGET_MESSAGE_THREAD_ID': '', # пустая строка = основной чат
+                'TOPIC_1_THREAD_ID': '',
+                'TOPIC_2_THREAD_ID': '',
+                'TOPIC_3_THREAD_ID': '',
+                'TOPIC_4_THREAD_ID': '',
+                'TOPIC_5_THREAD_ID': '',
+                'TOPIC_6_THREAD_ID': '',
+                'TOPIC_7_THREAD_ID': ''
             }
 
             for key, value in default_configs.items():
@@ -149,7 +164,7 @@ class NewsDatabase:
 
     def add_news(self, url: str, title: str, original_text: str,
                  processed_text: str, scheduled_time: datetime,
-                 is_urgent: bool = False) -> Optional[int]:
+                 is_urgent: bool = False, topic_id: Optional[int] = None) -> Optional[int]:
         """
         Добавить новость в очередь
 
@@ -160,6 +175,7 @@ class NewsDatabase:
             processed_text: Обработанный текст
             scheduled_time: Время публикации
             is_urgent: Срочная новость
+            topic_id: ID топика классификации
 
         Returns:
             ID добавленной записи или None
@@ -169,10 +185,10 @@ class NewsDatabase:
                 cursor = conn.cursor()
                 cursor.execute('''
                     INSERT INTO news_queue
-                    (url, title, original_text, processed_text, scheduled_time, is_urgent)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    (url, title, original_text, processed_text, scheduled_time, is_urgent, topic_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
-                ''', (url, title, original_text, processed_text, scheduled_time, is_urgent))
+                ''', (url, title, original_text, processed_text, scheduled_time, is_urgent, topic_id))
 
                 news_id = cursor.fetchone()[0]
                 logger.info(f"Новость добавлена в очередь: ID={news_id}, URL={url}")
@@ -306,7 +322,7 @@ class NewsDatabase:
 
             # Следующие новости
             cursor.execute('''
-                SELECT id, title, scheduled_time, is_urgent
+                SELECT id, title, scheduled_time, is_urgent, topic_id
                 FROM news_queue
                 WHERE status = 'pending'
                 ORDER BY scheduled_time ASC
@@ -328,7 +344,7 @@ class NewsDatabase:
         with self._get_connection() as conn:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute('''
-                SELECT id, title, url, scheduled_time, is_urgent
+                SELECT id, title, url, scheduled_time, is_urgent, topic_id
                 FROM news_queue
                 WHERE status = 'pending'
                 ORDER BY scheduled_time ASC

@@ -224,9 +224,16 @@ class TelegramHandler:
                            self.is_urgent_news(article_data.get('title', '') + ' ' + article_data.get('text', ''))
 
                 # Обработка через DeepSeek с текущим стилем
-                processed_text = self.deepseek.process_article(article_data)
+                deepseek_result = self.deepseek.process_article(article_data)
 
-                if processed_text:
+                if deepseek_result:
+                    processed_text, topic_id = deepseek_result
+                    
+                    # Если новость срочная, принудительно устанавливаем топик 1 (Важные Новости и Налоги)
+                    if is_urgent:
+                        logger.info("Срочная новость! Принудительно устанавливаем topic_id = 1")
+                        topic_id = 1
+                    
                     # Определение времени публикации
                     scheduled_time = self.scheduler.get_next_available_slot(is_urgent=is_urgent, db=self.db)
 
@@ -237,7 +244,8 @@ class TelegramHandler:
                         original_text=article_data.get('text', ''),
                         processed_text=processed_text,
                         scheduled_time=scheduled_time,
-                        is_urgent=is_urgent
+                        is_urgent=is_urgent,
+                        topic_id=topic_id
                     )
 
                     if news_id:
@@ -284,12 +292,35 @@ class TelegramHandler:
 
             # Отправка в целевой канал
             logger.info(f"Отправляем сообщение в канал {self.target_channel}")
-            self.bot.send_message(
-                chat_id=self.target_channel,
-                text=final_text,
-                parse_mode='HTML',
-                disable_web_page_preview=False
-            )
+            
+            kwargs = {
+                'chat_id': self.target_channel,
+                'text': final_text,
+                'parse_mode': 'HTML',
+                'disable_web_page_preview': False
+            }
+            
+            # Определяем топик публикации
+            message_thread_id = None
+            
+            topic_id = news.get('topic_id')
+            if topic_id is not None:
+                # Маппинг topic_id в настройку
+                topic_config_key = f'TOPIC_{topic_id}_THREAD_ID'
+                topic_thread_id = getattr(Config, topic_config_key, None)
+                if topic_thread_id and str(topic_thread_id).strip().isdigit():
+                    message_thread_id = int(str(topic_thread_id).strip())
+                    logger.info(f"Используем топик классификации: {message_thread_id} (topic_id: {topic_id})")
+            
+            # Если топик не определился через классификацию, используем дефолтный если есть
+            if message_thread_id:
+                kwargs['message_thread_id'] = message_thread_id
+            elif Config.TARGET_MESSAGE_THREAD_ID and str(Config.TARGET_MESSAGE_THREAD_ID).strip().isdigit():
+                message_thread_id = int(str(Config.TARGET_MESSAGE_THREAD_ID).strip())
+                kwargs['message_thread_id'] = message_thread_id
+                logger.info(f"Используем дефолтный топик: {message_thread_id}")
+                
+            self.bot.send_message(**kwargs)
             logger.info("Сообщение успешно отправлено")
 
             # Отметить как опубликованную

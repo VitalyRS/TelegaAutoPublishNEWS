@@ -22,6 +22,16 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     SOURCE_CHANNEL_ID = os.getenv('SOURCE_CHANNEL_ID')
     TARGET_CHANNEL_ID = os.getenv('TARGET_CHANNEL_ID')
+    TARGET_MESSAGE_THREAD_ID = os.getenv('TARGET_MESSAGE_THREAD_ID', '')
+    
+    # Подгруппы (топики)
+    TOPIC_1_THREAD_ID = os.getenv('TOPIC_1_THREAD_ID', '')
+    TOPIC_2_THREAD_ID = os.getenv('TOPIC_2_THREAD_ID', '')
+    TOPIC_3_THREAD_ID = os.getenv('TOPIC_3_THREAD_ID', '')
+    TOPIC_4_THREAD_ID = os.getenv('TOPIC_4_THREAD_ID', '')
+    TOPIC_5_THREAD_ID = os.getenv('TOPIC_5_THREAD_ID', '')
+    TOPIC_6_THREAD_ID = os.getenv('TOPIC_6_THREAD_ID', '')
+    TOPIC_7_THREAD_ID = os.getenv('TOPIC_7_THREAD_ID', '')
 
     # DeepSeek (только из .env по соображениям безопасности)
     DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
@@ -95,6 +105,14 @@ class Config:
         cls.ARTICLE_STYLE = db.get_config('ARTICLE_STYLE', cls.ARTICLE_STYLE)
         cls.TEXT_LENGTH = db.get_config('TEXT_LENGTH', cls.TEXT_LENGTH)
         cls.MONITOR_FROM_DATE = db.get_config('MONITOR_FROM_DATE', cls.MONITOR_FROM_DATE)
+        cls.TARGET_MESSAGE_THREAD_ID = db.get_config('TARGET_MESSAGE_THREAD_ID', cls.TARGET_MESSAGE_THREAD_ID)
+        cls.TOPIC_1_THREAD_ID = db.get_config('TOPIC_1_THREAD_ID', cls.TOPIC_1_THREAD_ID)
+        cls.TOPIC_2_THREAD_ID = db.get_config('TOPIC_2_THREAD_ID', cls.TOPIC_2_THREAD_ID)
+        cls.TOPIC_3_THREAD_ID = db.get_config('TOPIC_3_THREAD_ID', cls.TOPIC_3_THREAD_ID)
+        cls.TOPIC_4_THREAD_ID = db.get_config('TOPIC_4_THREAD_ID', cls.TOPIC_4_THREAD_ID)
+        cls.TOPIC_5_THREAD_ID = db.get_config('TOPIC_5_THREAD_ID', cls.TOPIC_5_THREAD_ID)
+        cls.TOPIC_6_THREAD_ID = db.get_config('TOPIC_6_THREAD_ID', cls.TOPIC_6_THREAD_ID)
+        cls.TOPIC_7_THREAD_ID = db.get_config('TOPIC_7_THREAD_ID', cls.TOPIC_7_THREAD_ID)
 
         max_articles = db.get_config('MAX_ARTICLES_PER_RUN', str(cls.MAX_ARTICLES_PER_RUN))
         cls.MAX_ARTICLES_PER_RUN = int(max_articles)
@@ -136,6 +154,22 @@ class Config:
                 cls.TEXT_LENGTH = value
             elif key == 'MONITOR_FROM_DATE':
                 cls.MONITOR_FROM_DATE = value
+            elif key == 'TARGET_MESSAGE_THREAD_ID':
+                cls.TARGET_MESSAGE_THREAD_ID = value
+            elif key == 'TOPIC_1_THREAD_ID':
+                cls.TOPIC_1_THREAD_ID = value
+            elif key == 'TOPIC_2_THREAD_ID':
+                cls.TOPIC_2_THREAD_ID = value
+            elif key == 'TOPIC_3_THREAD_ID':
+                cls.TOPIC_3_THREAD_ID = value
+            elif key == 'TOPIC_4_THREAD_ID':
+                cls.TOPIC_4_THREAD_ID = value
+            elif key == 'TOPIC_5_THREAD_ID':
+                cls.TOPIC_5_THREAD_ID = value
+            elif key == 'TOPIC_6_THREAD_ID':
+                cls.TOPIC_6_THREAD_ID = value
+            elif key == 'TOPIC_7_THREAD_ID':
+                cls.TOPIC_7_THREAD_ID = value
             elif key == 'MAX_ARTICLES_PER_RUN':
                 cls.MAX_ARTICLES_PER_RUN = int(value)
             elif key == 'CHECK_INTERVAL':

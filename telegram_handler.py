@@ -564,8 +564,25 @@ class TelegramHandler:
         for idx, news in enumerate(news_list[start_idx:end_idx], start=start_idx + 1):
             urgent_mark = "🔥 " if news['is_urgent'] else ""
             madrid_time = to_madrid_tz(news['scheduled_time']).strftime('%Y-%m-%d %H:%M')
+            
+            # Определяем топик для отображения
+            topic_id = news.get('topic_id')
+            topic_text = "Корень"
+            message_thread_id = None
+            
+            if topic_id is not None:
+                topic_config_key = f'TOPIC_{topic_id}_THREAD_ID'
+                topic_thread_id = getattr(Config, topic_config_key, None)
+                if topic_thread_id and str(topic_thread_id).strip().isdigit():
+                    message_thread_id = int(str(topic_thread_id).strip())
+                    topic_text = f"ID {message_thread_id} (Кат.#{topic_id})"
+            
+            if not message_thread_id and Config.TARGET_MESSAGE_THREAD_ID and str(Config.TARGET_MESSAGE_THREAD_ID).strip().isdigit():
+                message_thread_id = int(str(Config.TARGET_MESSAGE_THREAD_ID).strip())
+                topic_text = f"ID {message_thread_id} (Дефолт)"
+
             queue_text += f"{idx}. {urgent_mark}ID {news['id']}: {news['title'][:60]}...\n"
-            queue_text += f"   ⏰ {madrid_time}\n"
+            queue_text += f"   ⏰ {madrid_time} | 🎯 {topic_text}\n"
             queue_text += f"   🔗 {news['url'][:50]}...\n\n"
 
         # Создаем inline клавиатуру

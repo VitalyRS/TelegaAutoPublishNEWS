@@ -401,7 +401,8 @@ class TelegramHandler:
             final_text = body_escaped
 
         # Добавляем подпись канала и ссылку на источник (HTML формат)
-        footer = f'\n\nКанал: @iberia_news\n<a href="{url}">Источник</a>'
+        target_channel = Config.TARGET_CHANNEL_ID if Config.TARGET_CHANNEL_ID else "@iberia_news"
+        footer = f'\n\nКанал: {target_channel}\n<a href="{url}">Источник</a>'
 
         # Telegram имеет лимит в 4096 символов
         max_length = 4096 - len(footer) - 100  # запас

@@ -1133,7 +1133,9 @@ class TelegramHandler:
                     "- ARTICLE_STYLE (например: informative)\n"
                     "- TEXT_LENGTH (например: short, medium, long)\n"
                     "- CHECK_INTERVAL (например: 60)\n"
-                    "- MONITOR_FROM_DATE (например: 2025-01-01 00:00:00)\n\n"
+                    "- MONITOR_FROM_DATE (например: 2025-01-01 00:00:00)\n"
+                    "- TARGET_MESSAGE_THREAD_ID (ID топика по умолчанию)\n"
+                    "- TOPIC_1_THREAD_ID ... TOPIC_7_THREAD_ID (ID топиков)\n\n"
                     "Используйте /config для просмотра текущих настроек",
                     parse_mode=None
                 )
@@ -1146,7 +1148,10 @@ class TelegramHandler:
             # Список допустимых ключей конфигурации
             valid_keys = [
                 'PUBLISH_SCHEDULE', 'URGENT_KEYWORDS', 'MAX_ARTICLES_PER_RUN',
-                'ARTICLE_STYLE', 'TEXT_LENGTH', 'CHECK_INTERVAL', 'MONITOR_FROM_DATE'
+                'ARTICLE_STYLE', 'TEXT_LENGTH', 'CHECK_INTERVAL', 'MONITOR_FROM_DATE',
+                'TARGET_MESSAGE_THREAD_ID',
+                'TOPIC_1_THREAD_ID', 'TOPIC_2_THREAD_ID', 'TOPIC_3_THREAD_ID',
+                'TOPIC_4_THREAD_ID', 'TOPIC_5_THREAD_ID', 'TOPIC_6_THREAD_ID', 'TOPIC_7_THREAD_ID'
             ]
 
             # Проверяем, что ключ допустим

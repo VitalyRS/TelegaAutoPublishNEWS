@@ -897,6 +897,29 @@ class TelegramHandler:
             status = news.get('status', 'unknown')
             status_text = f"{status_emoji.get(status, '❓')} Статус: {status}\n"
 
+            # Определяем топик публикации для отображения
+            topic_id = news.get('topic_id')
+            topic_text = "Не определен"
+            message_thread_id = None
+            
+            if topic_id is not None:
+                topic_config_key = f'TOPIC_{topic_id}_THREAD_ID'
+                topic_thread_id = getattr(Config, topic_config_key, None)
+                if topic_thread_id and str(topic_thread_id).strip().isdigit():
+                    message_thread_id = int(str(topic_thread_id).strip())
+                    topic_text = f"{message_thread_id} (Категория #{topic_id})"
+            
+            if not message_thread_id and Config.TARGET_MESSAGE_THREAD_ID and str(Config.TARGET_MESSAGE_THREAD_ID).strip().isdigit():
+                message_thread_id = int(str(Config.TARGET_MESSAGE_THREAD_ID).strip())
+                if topic_id is not None:
+                    topic_text = f"{message_thread_id} (Дефолт, категория #{topic_id} пуста)"
+                else:
+                    topic_text = f"{message_thread_id} (Дефолт)"
+            elif not message_thread_id:
+                topic_text = "Без топика (в корень группы)"
+
+            topic_info = f"🎯 Топик: {topic_text}\n"
+
             # Форматируем scheduled_time с timezone Мадрида
             scheduled_time = news.get('scheduled_time')
             if scheduled_time:
@@ -913,7 +936,7 @@ class TelegramHandler:
             else:
                 updated_text = ""
 
-            info_text = f"ID: {news_id}\n{status_text}{scheduled_text}{updated_text}\n{'='*30}\n\n"
+            info_text = f"ID: {news_id}\n{status_text}{topic_info}{scheduled_text}{updated_text}\n{'='*30}\n\n"
 
             # Создаем inline клавиатуру с действиями
             keyboard = types.InlineKeyboardMarkup(row_width=2)

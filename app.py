@@ -103,8 +103,16 @@ def setup_scheduler():
     """Настройка планировщика публикаций и обслуживания"""
     global scheduler
 
-    # Создаем планировщик с timezone Мадрида
-    scheduler = BackgroundScheduler(timezone=MADRID_TZ)
+    if scheduler is None:
+        # Создаем планировщик с timezone Мадрида
+        scheduler = BackgroundScheduler(timezone=MADRID_TZ)
+        scheduler.start()
+        logger.info("Планировщик запущен с timezone: Europe/Madrid")
+
+    # Удаляем старые задачи публикации
+    for job in scheduler.get_jobs():
+        if job.id.startswith('publish_news_'):
+            scheduler.remove_job(job.id)
 
     # Получаем часы публикации из конфига
     publish_hours = Config.get_publish_hours()
@@ -131,9 +139,7 @@ def setup_scheduler():
         replace_existing=True
     )
     logger.info("Добавлена задача очистки старых статей на 3:00 (Madrid time)")
-
-    scheduler.start()
-    logger.info("Планировщик запущен с timezone: Europe/Madrid")
+    logger.info(f"Активные задачи планировщика: {len(scheduler.get_jobs())}")
 
 
 def start_bot():
@@ -154,6 +160,9 @@ def start_bot():
         logger.info(f"Текущие настройки: PUBLISH_SCHEDULE={Config.PUBLISH_SCHEDULE}, "
                    f"ARTICLE_STYLE={Config.ARTICLE_STYLE}, "
                    f"URGENT_KEYWORDS={Config.URGENT_KEYWORDS}")
+
+        # Инициализируем планировщик только ПОСЛЕ загрузки настроек
+        setup_scheduler()
 
         # Создание обработчика с передачей database
         telegram_handler = TelegramHandler(database=database)
@@ -186,6 +195,9 @@ def start_bot_webhook():
                    f"ARTICLE_STYLE={Config.ARTICLE_STYLE}, "
                    f"URGENT_KEYWORDS={Config.URGENT_KEYWORDS}")
 
+        # Инициализируем планировщик только ПОСЛЕ загрузки настроек
+        setup_scheduler()
+
         # Создание обработчика с передачей database
         telegram_handler = TelegramHandler(database=database)
 
@@ -214,9 +226,6 @@ def stop_bot():
 def run_bot():
     """Запуск бота в синхронном режиме"""
     try:
-        # Настройка планировщика
-        setup_scheduler()
-
         # Запуск бота (блокирующий вызов)
         start_bot()
 
@@ -239,9 +248,6 @@ if __name__ == '__main__':
         logger.info(f"Webhook URL: {Config.WEBHOOK_URL}{Config.WEBHOOK_PATH}")
         logger.info(f"Flask будет слушать на {Config.FLASK_HOST}:{Config.FLASK_PORT}")
         logger.info("========================================")
-
-        # Настройка планировщика
-        setup_scheduler()
 
         # Инициализация бота в режиме webhook (не блокирующий)
         start_bot_webhook()

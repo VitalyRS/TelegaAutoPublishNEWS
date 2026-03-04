@@ -1216,12 +1216,19 @@ class TelegramHandler:
                 # Если это ключевые слова - обновляем локальный кэш
                 if key == 'URGENT_KEYWORDS':
                     self.urgent_keywords = Config.get_urgent_keywords()
+                    
+                # Если это расписание - обновляем планировщик
+                if key == 'PUBLISH_SCHEDULE':
+                    try:
+                        from app import setup_scheduler
+                        setup_scheduler()
+                        logger.info("Расписание планировщика успешно обновлено на лету")
+                    except Exception as e:
+                        logger.error(f"Ошибка при обновлении расписания планировщика: {e}")
 
                 self.bot.reply_to(
                     message,
-                    f"✅ Настройка обновлена:\n<b>{key}</b> = <code>{value}</code>\n\n"
-                    f"⚠️ Некоторые изменения (например, PUBLISH_SCHEDULE) "
-                    f"потребуют перезапуска бота для полного применения.",
+                    f"✅ Настройка обновлена:\n<b>{key}</b> = <code>{value}</code>\n",
                     parse_mode='HTML'
                 )
             else:
@@ -1258,6 +1265,14 @@ class TelegramHandler:
 
             # Обновляем ключевые слова
             self.urgent_keywords = Config.get_urgent_keywords()
+            
+            # Обновляем планировщик
+            try:
+                from app import setup_scheduler
+                setup_scheduler()
+                logger.info("Расписание планировщика успешно обновлено после перезагрузки настроек")
+            except Exception as e:
+                logger.error(f"Ошибка при обновлении расписания планировщика: {e}")
 
             logger.info("Настройки перезагружены из БД")
 
@@ -1268,8 +1283,7 @@ class TelegramHandler:
                 f"- PUBLISH_SCHEDULE: `{Config.PUBLISH_SCHEDULE}`\n"
                 f"- ARTICLE_STYLE: `{Config.ARTICLE_STYLE}`\n"
                 f"- URGENT_KEYWORDS: `{Config.URGENT_KEYWORDS}`\n"
-                f"- MAX_ARTICLES_PER_RUN: `{Config.MAX_ARTICLES_PER_RUN}`\n\n"
-                f"⚠️ Изменения в PUBLISH_SCHEDULE потребуют перезапуска бота",
+                f"- MAX_ARTICLES_PER_RUN: `{Config.MAX_ARTICLES_PER_RUN}`\n",
                 parse_mode='Markdown'
             )
 

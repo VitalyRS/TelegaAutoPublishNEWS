@@ -1,7 +1,6 @@
 """
 Модуль для работы с базой данных очереди новостей (PostgreSQL)
 """
-import psycopg2
 from psycopg2 import pool, errors
 from psycopg2.extras import RealDictCursor
 import logging

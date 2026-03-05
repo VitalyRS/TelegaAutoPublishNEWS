@@ -2,7 +2,6 @@
 Основное приложение бота для автоматической публикации новостей
 """
 import logging
-import threading
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger

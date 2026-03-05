@@ -103,18 +103,6 @@ class DeepSeekClient:
             logger.error(f"Ошибка при обработке статьи через DeepSeek: {e}")
             return None
 
-    def _create_prompt(self, article_data: Dict[str, str]) -> str:
-        """
-        Создание промпта для DeepSeek
-
-        Args:
-            article_data: Данные статьи
-
-        Returns:
-            Промпт для API
-        """
-        style_description = self.STYLE_DESCRIPTIONS.get(self.style, self.STYLE_DESCRIPTIONS['informative'])
-
     def _create_system_prompt(self, style_description: str, text_length_chars: int, text_length_name: str) -> str:
         """Создает системный промпт с правилами форматирования"""
         return f"""

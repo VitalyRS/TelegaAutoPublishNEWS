@@ -873,7 +873,6 @@ class TelegramHandler:
         """Команда /get_style или /getstyle"""
         try:
             current_style = self.deepseek.get_style()
-            available_styles = '\n'.join([f"- {style}" for style in Config.AVAILABLE_STYLES])
 
             # Создаем inline клавиатуру для быстрого изменения стиля
             keyboard = types.InlineKeyboardMarkup(row_width=1)

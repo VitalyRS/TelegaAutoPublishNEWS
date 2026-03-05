@@ -202,6 +202,22 @@ class TelegramHandler:
                 return True
         return False
 
+    @staticmethod
+    def extract_category(text: str) -> Optional[int]:
+        """
+        Извлекает категорию (cat1 - cat6) из текста.
+
+        Args:
+            text: Текст для проверки
+
+        Returns:
+            Номер категории (от 1 до 6) или None, если тег не найден.
+        """
+        match = re.search(r'\bcat([1-6])\b', text.lower())
+        if match:
+            return int(match.group(1))
+        return None
+
     def _process_urls(self, urls: List[str], channel_message_text: str = ""):
         """
         Обработка найденных URL
@@ -223,14 +239,21 @@ class TelegramHandler:
                 is_urgent = self.is_urgent_news(channel_message_text) or \
                            self.is_urgent_news(article_data.get('title', '') + ' ' + article_data.get('text', ''))
 
+                # Извлечение ручной категории из сообщения канала
+                manual_category = self.extract_category(channel_message_text)
+
                 # Обработка через DeepSeek с текущим стилем
                 deepseek_result = self.deepseek.process_article(article_data)
 
                 if deepseek_result:
                     processed_text, topic_id = deepseek_result
                     
-                    # Если новость срочная, принудительно устанавливаем топик 1 (Важные Новости и Налоги)
-                    if is_urgent:
+                    # Переопределение топика
+                    if manual_category:
+                        logger.info(f"Найдена ручная категория в тексте: cat{manual_category}. Устанавливаем topic_id = {manual_category}")
+                        topic_id = manual_category
+                    elif is_urgent:
+                        # Если новость срочная и нет ручной категории, принудительно устанавливаем топик 1
                         logger.info("Срочная новость! Принудительно устанавливаем topic_id = 1")
                         topic_id = 1
                     

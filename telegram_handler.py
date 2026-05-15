@@ -205,17 +205,22 @@ class TelegramHandler:
     @staticmethod
     def extract_category(text: str) -> Optional[int]:
         """
-        Извлекает категорию (cat1 - cat6) из текста.
+        Извлекает категорию (cat1 - cat7) из текста.
+        Поддерживает также тег #aboutus (категория 7).
 
         Args:
             text: Текст для проверки
 
         Returns:
-            Номер категории (от 1 до 6) или None, если тег не найден.
+            Номер категории (от 1 до 7) или None, если тег не найден.
         """
-        match = re.search(r'\bcat([1-6])\b', text.lower())
+        # Поиск стандартных тегов cat1‑cat7
+        match = re.search(r'\bcat([1-7])\b', text.lower())
         if match:
             return int(match.group(1))
+        # Поиск пользовательского тега #aboutus (рег. без учёта регистра, с/без #)
+        if re.search(r'(?i)#?aboutus\b', text):
+            return 7
         return None
 
     def _process_urls(self, urls: List[str], channel_message_text: str = ""):

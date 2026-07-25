@@ -237,8 +237,13 @@ class DeepSeekClient:
                 if "В ФОРМАТЕ JSON" not in system_prompt:
                     system_prompt += " Ты ДОЛЖЕН отвечать ИСКЛЮЧИТЕЛЬНО в формате JSON."
 
+            model_name = getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-v4-flash')
+            if not model_name or model_name not in ['deepseek-v4-flash', 'deepseek-v4-pro']:
+                logger.warning(f"Некорректное имя модели '{model_name}'. Используется 'deepseek-v4-flash'.")
+                model_name = 'deepseek-v4-flash'
+
             kwargs = {
-                'model': getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-v4-flash'),
+                'model': model_name,
                 'messages': [
                     {
                         'role': 'system',
@@ -259,9 +264,22 @@ class DeepSeekClient:
             try:
                 response = self.client.chat.completions.create(**kwargs)
             except Exception as req_err:
+                err_str = str(req_err)
                 if expect_json and 'response_format' in kwargs:
                     logger.warning(f"Запрос с response_format вернул ошибку ({req_err}), повторная попытка без response_format...")
                     kwargs.pop('response_format')
+                    try:
+                        response = self.client.chat.completions.create(**kwargs)
+                    except Exception as req_err2:
+                        if 'supported API model names' in str(req_err2) and kwargs.get('model') != 'deepseek-v4-flash':
+                            logger.warning(f"Принудительно устанавливаем модель 'deepseek-v4-flash' из-за ошибки API: {req_err2}")
+                            kwargs['model'] = 'deepseek-v4-flash'
+                            response = self.client.chat.completions.create(**kwargs)
+                        else:
+                            raise req_err2
+                elif 'supported API model names' in err_str and kwargs.get('model') != 'deepseek-v4-flash':
+                    logger.warning(f"Принудительно устанавливаем модель 'deepseek-v4-flash' из-за ошибки API: {req_err}")
+                    kwargs['model'] = 'deepseek-v4-flash'
                     response = self.client.chat.completions.create(**kwargs)
                 else:
                     raise req_err

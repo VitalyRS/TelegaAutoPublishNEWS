@@ -238,7 +238,7 @@ class DeepSeekClient:
                     system_prompt += " Ты ДОЛЖЕН отвечать ИСКЛЮЧИТЕЛЬНО в формате JSON."
 
             kwargs = {
-                'model': getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat'),
+                'model': getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-v4-flash'),
                 'messages': [
                     {
                         'role': 'system',
@@ -255,8 +255,16 @@ class DeepSeekClient:
             }
             if expect_json:
                 kwargs['response_format'] = {'type': 'json_object'}
-                
-            response = self.client.chat.completions.create(**kwargs)
+
+            try:
+                response = self.client.chat.completions.create(**kwargs)
+            except Exception as req_err:
+                if expect_json and 'response_format' in kwargs:
+                    logger.warning(f"Запрос с response_format вернул ошибку ({req_err}), повторная попытка без response_format...")
+                    kwargs.pop('response_format')
+                    response = self.client.chat.completions.create(**kwargs)
+                else:
+                    raise req_err
 
             if response.choices and len(response.choices) > 0:
                 return response.choices[0].message.content

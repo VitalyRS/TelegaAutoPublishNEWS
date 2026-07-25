@@ -238,7 +238,7 @@ class DeepSeekClient:
                     system_prompt += " Ты ДОЛЖЕН отвечать ИСКЛЮЧИТЕЛЬНО в формате JSON."
 
             kwargs = {
-                'model': 'deepseek-v4-flash',
+                'model': getattr(Config, 'DEEPSEEK_MODEL', 'deepseek-chat'),
                 'messages': [
                     {
                         'role': 'system',

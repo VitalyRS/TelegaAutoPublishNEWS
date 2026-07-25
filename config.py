@@ -103,6 +103,7 @@ class Config:
         # Загружаем настройки из БД (с fallback на текущие значения)
         cls.PUBLISH_SCHEDULE = db.get_config('PUBLISH_SCHEDULE', cls.PUBLISH_SCHEDULE)
         cls.URGENT_KEYWORDS = db.get_config('URGENT_KEYWORDS', cls.URGENT_KEYWORDS)
+        cls.DEEPSEEK_MODEL = db.get_config('DEEPSEEK_MODEL', cls.DEEPSEEK_MODEL)
         cls.ARTICLE_STYLE = db.get_config('ARTICLE_STYLE', cls.ARTICLE_STYLE)
         cls.TEXT_LENGTH = db.get_config('TEXT_LENGTH', cls.TEXT_LENGTH)
         cls.MONITOR_FROM_DATE = db.get_config('MONITOR_FROM_DATE', cls.MONITOR_FROM_DATE)
@@ -149,6 +150,8 @@ class Config:
                 cls.PUBLISH_SCHEDULE = value
             elif key == 'URGENT_KEYWORDS':
                 cls.URGENT_KEYWORDS = value
+            elif key == 'DEEPSEEK_MODEL':
+                cls.DEEPSEEK_MODEL = value
             elif key == 'ARTICLE_STYLE':
                 cls.ARTICLE_STYLE = value
             elif key == 'TEXT_LENGTH':

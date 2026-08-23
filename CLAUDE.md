@@ -146,6 +146,12 @@ This bot implements an automated news pipeline with scheduled publishing:
 ### Urgent News Bypass
 Articles containing keywords from `URGENT_KEYWORDS` (`молния`, `breaking` by default) skip the queue and publish immediately.
 
+### Direct Posts / Digests Bypass (#dai)
+Messages in `SOURCE_CHANNEL_ID` containing the `#dai` tag bypass `news_parser.py` and `deepseek_client.py`.
+- The `#dai` tag is automatically stripped before saving.
+- Markdown links `[text](url)` and `**bold**` formatting are preserved and converted to Telegram HTML.
+- The post is placed directly into `database.py` queue with a unique `dai:<timestamp>_<hash>` ID and scheduled like other news.
+
 ### Scheduling Logic
 - **One article per slot**: Only 1 news item publishes per time slot
 - **Late articles**: News arriving after 20:00 scheduled for next day's 8:00 slot

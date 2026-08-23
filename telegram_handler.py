@@ -155,6 +155,13 @@ class TelegramHandler:
 
             logger.info(f"Получено новое сообщение из канала: {message.text[:100]}")
 
+            # Проверяем флаг прямого поста / дайджеста (#dai)
+            if re.search(r'(?i)#dai\b', message.text):
+                logger.info("Обнаружен флаг прямого поста (#dai). Обработка в обход DeepSeek/парсера.")
+                thread = threading.Thread(target=self._process_direct_post, args=(message.text,), daemon=True)
+                thread.start()
+                return
+
             # Извлекаем ссылки из сообщения
             urls = self.extract_urls(message.text)
 
@@ -222,6 +229,75 @@ class TelegramHandler:
         if re.search(r'(?i)#?aboutus\b', text):
             return 7
         return None
+
+    def _process_direct_post(self, raw_text: str):
+        """
+        Обработка прямого поста с флагом #dai (в обход DeepSeek и парсера)
+
+        Args:
+            raw_text: Исходный текст сообщения из канала
+        """
+        try:
+            # Проверка срочности
+            is_urgent = self.is_urgent_news(raw_text)
+
+            # Извлечение ручной категории (cat1-cat7, #aboutus)
+            manual_category = self.extract_category(raw_text)
+
+            if manual_category:
+                logger.info(f"Прямой пост: найдена категория cat{manual_category}. topic_id = {manual_category}")
+                topic_id = manual_category
+            elif is_urgent:
+                logger.info("Прямой пост: срочная новость! Принудительно устанавливаем topic_id = 1")
+                topic_id = 1
+            else:
+                topic_id = None
+
+            # Удаляем флаг #dai (без учёта регистра)
+            clean_text = re.sub(r'(?i)#dai\b', '', raw_text)
+            clean_text = clean_text.strip()
+
+            if not clean_text:
+                logger.warning("Прямой пост: пустой текст после удаления флага #dai")
+                return
+
+            # Заголовок - первая непустая строка
+            lines = [line.strip() for line in clean_text.split('\n') if line.strip()]
+            title = lines[0] if lines else "Дайджест"
+            if len(title) > 200:
+                title = title[:197] + "..."
+
+            # Уникальный псевдо-URL для базы данных
+            import hashlib
+            import time
+            unique_hash = hashlib.md5(f"{clean_text}_{time.time()}".encode('utf-8')).hexdigest()[:10]
+            dai_url = f"dai:{int(time.time())}_{unique_hash}"
+
+            # Определение времени публикации
+            scheduled_time = self.scheduler.get_next_available_slot(is_urgent=is_urgent, db=self.db)
+
+            # Добавление в очередь новостей
+            news_id = self.db.add_news(
+                url=dai_url,
+                title=title,
+                original_text=clean_text,
+                processed_text=clean_text,
+                scheduled_time=scheduled_time,
+                is_urgent=is_urgent,
+                topic_id=topic_id
+            )
+
+            if news_id:
+                if is_urgent:
+                    logger.info(f"Срочный прямой пост ID {news_id} публикуется немедленно")
+                    self.publish_news_by_id(news_id)
+                else:
+                    logger.info(f"Прямой пост ID {news_id} успешно добавлен в очередь на {scheduled_time}")
+            else:
+                logger.warning("Не удалось добавить прямой пост в очередь")
+
+        except Exception as e:
+            logger.error(f"Ошибка при обработке прямого поста: {e}", exc_info=True)
 
     def _process_urls(self, urls: List[str], channel_message_text: str = ""):
         """
@@ -394,6 +470,51 @@ class TelegramHandler:
 
         processed_text = news.get('processed_text', '')
         url = news.get('url', '')
+        is_dai = url.startswith('dai:')
+
+        target_channel = Config.TARGET_CHANNEL_ID if Config.TARGET_CHANNEL_ID else "@iberia_news"
+
+        if is_dai:
+            # Для прямых постов/дайджестов: поддерживаем Markdown ссылки и форматирование
+            # 1. Экранируем HTML
+            escaped_text = html.escape(processed_text)
+
+            # 2. Заменяем Markdown ссылки [текст](url) на <a href="url">текст</a>
+            def link_replace(match):
+                link_title = match.group(1)
+                link_url = match.group(2).replace('&amp;', '&')
+                return f'<a href="{link_url}">{link_title}</a>'
+
+            formatted = re.sub(r'\[([^\]]+)\]\((https?://[^\s\)]+)\)', link_replace, escaped_text)
+
+            # 3. Заменяем **жирный** на <b>...</b>
+            formatted = re.sub(r'\*\*([^\*\n]+)\*\*', r'<b>\1</b>', formatted)
+
+            # 4. Первая строка - делаем заголовок жирным, если он еще не жирный
+            lines = formatted.split('\n')
+            title_found = False
+            new_lines = []
+            for line in lines:
+                if not title_found and line.strip():
+                    stripped = line.strip()
+                    if not (stripped.startswith('<b>') or stripped.startswith('&lt;b&gt;')):
+                        new_lines.append(f"<b>{stripped}</b>")
+                    else:
+                        new_lines.append(line)
+                    title_found = True
+                else:
+                    new_lines.append(line)
+
+            final_text = '\n'.join(new_lines).strip()
+
+            # Футер без фиктивной ссылки на источник
+            footer = f'\n\nКанал: {target_channel}' if target_channel else ''
+
+            max_length = 4096 - len(footer) - 100
+            if len(final_text) > max_length:
+                final_text = final_text[:max_length] + "..."
+
+            return final_text + footer
 
         # Разбиваем текст на строки
         lines = processed_text.split('\n')
@@ -429,7 +550,6 @@ class TelegramHandler:
             final_text = body_escaped
 
         # Добавляем подпись канала и ссылку на источник (HTML формат)
-        target_channel = Config.TARGET_CHANNEL_ID if Config.TARGET_CHANNEL_ID else "@iberia_news"
         footer = f'\n\nКанал: {target_channel}\n<a href="{url}">Источник</a>'
 
         # Telegram имеет лимит в 4096 символов

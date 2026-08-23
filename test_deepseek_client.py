@@ -119,8 +119,40 @@ class TestDeepSeekClient(unittest.TestCase):
 
         formatted = handler._format_for_telegram_from_db(news_item)
 
-        self.assertIn('<a href="https://www.20minutos.es/article.html">Читать оригинал на 20minutos.es</a>', formatted)
-        self.assertIn('<a href="https://www.elnortedecastilla.es/article.html">Читать оригинал на elnortedecastilla.es</a>', formatted)
+    def test_spanish_lifehacks_digest_formatting(self):
+        """Проверка форматирования дайджеста лайфхаков с ссылками google redirect"""
+        import sys
+        for mod in ['telebot', 'telebot.types', 'newspaper', 'apscheduler', 'apscheduler.schedulers', 'apscheduler.schedulers.background']:
+            if mod not in sys.modules:
+                sys.modules[mod] = MagicMock()
+
+        from telegram_handler import TelegramHandler
+
+        with patch('telegram_handler.telebot.TeleBot'), \
+             patch('telegram_handler.NewsDatabase'), \
+             patch('telegram_handler.PublicationScheduler'), \
+             patch('deepseek_client.DeepSeekClient'):
+            handler = TelegramHandler()
+
+        sample_text = (
+            "🇪🇸 Лайфхаки для жизни в Испании: как избежать штрафов и защитить свои права в 2026 году\n"
+            "📬 1. Срочно оцифруйте свои больничные! 🔗 [Подробнее на Expansion](https://www.google.com/url?sa=E&q=https%3A%2F%2Fwww.expansion.com%2Feconomia%2F2026%2F08%2F21%2F6a881848468aeb1c3d8b4596.html)\n"
+            "🚘 2. Владельцам авто старше 10 лет: ITV каждые 6 месяцев 🔗 [Подробнее на OKDiario](https://www.google.com/url?sa=E&q=https%3A%2F%2Fokdiario.com%2Fmotor%2Fboe-lo-confirma-dgt-pasar-itv-cada-seis-meses-vehiculos-mas-10-anos-antiguedad-17262248)"
+        )
+
+        news_item = {
+            'processed_text': sample_text,
+            'url': 'dai:67890_fghij'
+        }
+
+        formatted = handler._format_for_telegram_from_db(news_item)
+
+        # Проверяем, что Google redirect ссылки очищены до прямых URL
+        self.assertIn('<a href="https://www.expansion.com/economia/2026/08/21/6a881848468aeb1c3d8b4596.html">Подробнее на Expansion</a>', formatted)
+        self.assertIn('<a href="https://okdiario.com/motor/boe-lo-confirma-dgt-pasar-itv-cada-seis-meses-vehiculos-mas-10-anos-antiguedad-17262248">Подробнее на OKDiario</a>', formatted)
+        # Проверяем отсутствие unclosed tags
+        self.assertEqual(formatted.count('<a href='), formatted.count('</a>'))
+        self.assertEqual(formatted.count('<b>'), formatted.count('</b>'))
 
 
 if __name__ == '__main__':

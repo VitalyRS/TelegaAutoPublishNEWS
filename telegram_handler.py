@@ -460,7 +460,20 @@ class TelegramHandler:
                 kwargs['message_thread_id'] = message_thread_id
                 logger.info(f"Используем дефолтный топик: {message_thread_id}")
                 
-            self.bot.send_message(**kwargs)
+            try:
+                self.bot.send_message(**kwargs)
+            except Exception as send_err:
+                err_str = str(send_err)
+                if "can't parse entities" in err_str.lower() or "unclosed" in err_str.lower():
+                    logger.warning(f"Ошибка парсинга HTML в Telegram ({send_err}), отправляем безопасный текст...")
+                    # Удаляем HTML теги для гарантированной отправки
+                    clean_fallback_text = re.sub(r'<[^>]+>', '', final_text)
+                    kwargs['text'] = clean_fallback_text
+                    kwargs.pop('parse_mode', None)
+                    self.bot.send_message(**kwargs)
+                else:
+                    raise send_err
+
             logger.info("Сообщение успешно отправлено")
 
             # Отметить как опубликованную
@@ -491,10 +504,26 @@ class TelegramHandler:
             logger.error(f"Ошибка при публикации по расписанию: {e}")
 
     @staticmethod
+    def _clean_url(url: str) -> str:
+        """Очищает URL от редиректов Google и лишних обёрток"""
+        import urllib.parse
+        if 'google.com/url' in url:
+            try:
+                parsed = urllib.parse.urlparse(url)
+                params = urllib.parse.parse_qs(parsed.query)
+                if 'q' in params and params['q']:
+                    return params['q'][0]
+                elif 'url' in params and params['url']:
+                    return params['url'][0]
+            except Exception:
+                pass
+        return url
+
+    @staticmethod
     def _format_for_telegram_from_db(news: dict) -> str:
         """
         Форматирование текста для Telegram из БД
-        Заголовок делается жирным через HTML, остальное - простой текст
+        Заголовок делается жирным через HTML, ссылки переводятся в HTML <a href="...">
 
         Args:
             news: Данные новости из БД
@@ -503,6 +532,7 @@ class TelegramHandler:
             Отформатированный текст для HTML parse mode
         """
         import html
+        import urllib.parse
 
         processed_text = news.get('processed_text', '')
         url = news.get('url', '')
@@ -510,17 +540,19 @@ class TelegramHandler:
 
         target_channel = Config.TARGET_CHANNEL_ID if Config.TARGET_CHANNEL_ID else "@iberia_news"
 
+        def link_replace(match):
+            link_title = match.group(1)
+            raw_url = match.group(2).replace('&amp;', '&')
+            link_url = TelegramHandler._clean_url(raw_url)
+            safe_url = html.escape(link_url, quote=True)
+            return f'<a href="{safe_url}">{link_title}</a>'
+
         if is_dai:
             # Для прямых постов/дайджестов: поддерживаем Markdown ссылки и форматирование
             # 1. Экранируем HTML
             escaped_text = html.escape(processed_text)
 
-            # 2. Заменяем Markdown ссылки [текст](url) на <a href="url">текст</a>
-            def link_replace(match):
-                link_title = match.group(1)
-                link_url = match.group(2).replace('&amp;', '&')
-                return f'<a href="{link_url}">{link_title}</a>'
-
+            # 2. Заменяем Markdown ссылки [текст](url) на <a href="url">текст</a> с очисткой URL
             formatted = re.sub(r'\[([^\]]+)\]\((https?://[^\s\)]+)\)', link_replace, escaped_text)
 
             # 3. Заменяем **жирный** на <b>...</b>
@@ -545,14 +577,9 @@ class TelegramHandler:
 
             # Футер без фиктивной ссылки на источник
             footer = f'\n\nКанал: {target_channel}' if target_channel else ''
-
-            max_length = 4096 - len(footer) - 100
-            if len(final_text) > max_length:
-                final_text = final_text[:max_length] + "..."
-
             return final_text + footer
 
-        # Разбиваем текст на строки
+        # Обычные новости (не дайджесты)
         lines = processed_text.split('\n')
 
         # Первая непустая строка - это заголовок
@@ -574,25 +601,25 @@ class TelegramHandler:
         body_text = '\n'.join(body_lines).strip()
         body_escaped = html.escape(body_text)
 
+        # Преобразуем Markdown-ссылки [текст](url) в <a href="url">текст</a>
+        body_formatted = re.sub(r'\[([^\]]+)\]\((https?://[^\s\)]+)\)', link_replace, body_escaped)
+        body_formatted = re.sub(r'\*\*([^\*\n]+)\*\*', r'<b>\1</b>', body_formatted)
+
         # Форматируем заголовок жирным
         formatted_title = f"<b>{title_escaped}</b>" if title_escaped else ""
 
         # Собираем финальный текст
-        if formatted_title and body_escaped:
-            final_text = f"{formatted_title}\n\n{body_escaped}"
+        if formatted_title and body_formatted:
+            final_text = f"{formatted_title}\n\n{body_formatted}"
         elif formatted_title:
             final_text = formatted_title
         else:
-            final_text = body_escaped
+            final_text = body_formatted
 
         # Добавляем подпись канала и ссылку на источник (HTML формат)
-        footer = f'\n\nКанал: {target_channel}\n<a href="{url}">Источник</a>'
-
-        # Telegram имеет лимит в 4096 символов
-        max_length = 4096 - len(footer) - 100  # запас
-
-        if len(final_text) > max_length:
-            final_text = final_text[:max_length] + "..."
+        clean_source_url = TelegramHandler._clean_url(url)
+        safe_source_url = html.escape(clean_source_url, quote=True)
+        footer = f'\n\nКанал: {target_channel}\n<a href="{safe_source_url}">Источник</a>'
 
         return final_text + footer
 

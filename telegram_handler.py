@@ -56,8 +56,8 @@ class TelegramHandler:
     def _setup_handlers(self):
         """Настройка обработчиков сообщений и команд"""
 
-        # Обработчик сообщений из каналов
-        @self.bot.channel_post_handler(content_types=['text'])
+        # Обработчик сообщений из каналов (текст и медиа с подписью)
+        @self.bot.channel_post_handler(content_types=['text', 'photo', 'video', 'document'])
         def handle_channel_post(message):
             self._handle_channel_message(message)
 
@@ -129,6 +129,41 @@ class TelegramHandler:
 
         logger.info("Обработчики Telegram настроены")
 
+    @staticmethod
+    def extract_formatted_text(message: types.Message) -> str:
+        """
+        Извлекает текст сообщения (или caption) с сохранением ссылок и форматирования из entities.
+        Если в сообщении присутствуют ссылки Telegram (text_link), они преобразуются в Markdown [текст](url).
+        """
+        raw_text = message.text or message.caption or ""
+        if not raw_text:
+            return ""
+
+        entities = message.entities or message.caption_entities
+        if not entities:
+            return raw_text
+
+        try:
+            # Смещения и длины в Telegram Bot API рассчитываются в UTF-16 code units
+            utf16_bytes = raw_text.encode('utf-16-le')
+            # Сортируем entities по offset в обратном порядке, чтобы замены не смещали индексы
+            sorted_entities = sorted(entities, key=lambda e: e.offset, reverse=True)
+
+            for entity in sorted_entities:
+                if entity.type == 'text_link' and getattr(entity, 'url', None):
+                    start_byte = entity.offset * 2
+                    end_byte = (entity.offset + entity.length) * 2
+                    if end_byte <= len(utf16_bytes):
+                        entity_text = utf16_bytes[start_byte:end_byte].decode('utf-16-le', errors='ignore')
+                        # Заменяем на Markdown-ссылку [текст](url)
+                        replacement = f"[{entity_text}]({entity.url})".encode('utf-16-le')
+                        utf16_bytes = utf16_bytes[:start_byte] + replacement + utf16_bytes[end_byte:]
+
+            return utf16_bytes.decode('utf-16-le', errors='ignore')
+        except Exception as e:
+            logger.warning(f"Ошибка при обработке entities сообщения: {e}")
+            return raw_text
+
     def _handle_channel_message(self, message: types.Message):
         """
         Обработка сообщений из канала
@@ -137,7 +172,8 @@ class TelegramHandler:
             message: Сообщение от Telegram
         """
         try:
-            if not message or not message.text:
+            raw_text = self.extract_formatted_text(message)
+            if not raw_text:
                 return
 
             # Проверяем, что сообщение из нужного канала
@@ -153,23 +189,23 @@ class TelegramHandler:
                 logger.debug(f"Пропускаем старое сообщение от {message_date}")
                 return
 
-            logger.info(f"Получено новое сообщение из канала: {message.text[:100]}")
+            logger.info(f"Получено новое сообщение из канала: {raw_text[:100]}")
 
             # Проверяем флаг прямого поста / дайджеста (#dai)
-            if re.search(r'(?i)#dai\b', message.text):
+            if re.search(r'(?i)#dai\b', raw_text):
                 logger.info("Обнаружен флаг прямого поста (#dai). Обработка в обход DeepSeek/парсера.")
-                thread = threading.Thread(target=self._process_direct_post, args=(message.text,), daemon=True)
+                thread = threading.Thread(target=self._process_direct_post, args=(raw_text,), daemon=True)
                 thread.start()
                 return
 
             # Извлекаем ссылки из сообщения
-            urls = self.extract_urls(message.text)
+            urls = self.extract_urls(raw_text)
 
             if urls:
                 logger.info(f"Найдено {len(urls)} ссылок: {urls}")
                 # Обработка URL в отдельном потоке чтобы не блокировать бота
                 # daemon=True позволяет потоку завершиться при остановке бота и не накапливаться в памяти
-                thread = threading.Thread(target=self._process_urls, args=(urls, message.text), daemon=True)
+                thread = threading.Thread(target=self._process_urls, args=(urls, raw_text), daemon=True)
                 thread.start()
             else:
                 logger.info("В сообщении не найдено ссылок")

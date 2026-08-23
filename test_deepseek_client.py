@@ -89,5 +89,39 @@ class TestDeepSeekClient(unittest.TestCase):
         self.assertEqual(client.client.chat.completions.create.call_count, 2)
 
 
+    def test_dai_digest_preserves_all_links(self):
+        """Проверка, что в дайджестах #dai все ссылки в формате Markdown сохраняются и преобразуются в HTML"""
+        import sys
+        for mod in ['telebot', 'telebot.types', 'newspaper', 'apscheduler', 'apscheduler.schedulers', 'apscheduler.schedulers.background']:
+            if mod not in sys.modules:
+                sys.modules[mod] = MagicMock()
+
+        from telegram_handler import TelegramHandler
+
+        # Создаем заглушку обработчика
+        with patch('telegram_handler.telebot.TeleBot'), \
+             patch('telegram_handler.NewsDatabase'), \
+             patch('telegram_handler.PublicationScheduler'), \
+             patch('deepseek_client.DeepSeekClient'):
+            handler = TelegramHandler()
+
+        sample_dai_text = (
+            "🦁 1. Спецоперация по поиску льва\n"
+            "🔗 [Читать оригинал на 20minutos.es](https://www.20minutos.es/article.html)\n\n"
+            "🏴‍☠️ 2. Пиратский флаг\n"
+            "🔗 [Читать оригинал на elnortedecastilla.es](https://www.elnortedecastilla.es/article.html)"
+        )
+
+        news_item = {
+            'processed_text': sample_dai_text,
+            'url': 'dai:12345_abcde'
+        }
+
+        formatted = handler._format_for_telegram_from_db(news_item)
+
+        self.assertIn('<a href="https://www.20minutos.es/article.html">Читать оригинал на 20minutos.es</a>', formatted)
+        self.assertIn('<a href="https://www.elnortedecastilla.es/article.html">Читать оригинал на elnortedecastilla.es</a>', formatted)
+
+
 if __name__ == '__main__':
     unittest.main()

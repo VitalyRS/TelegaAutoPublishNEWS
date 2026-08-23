@@ -266,6 +266,32 @@ class TelegramHandler:
             return 7
         return None
 
+    @staticmethod
+    def clean_service_tags(text: str, urgent_keywords: Optional[List[str]] = None) -> str:
+        """
+        Удаляет служебные управляющие теги (#dai, cat1-cat7, #aboutus, breaking, молния и т.д.)
+        из текста прямого поста перед сохранением и публикацией.
+        """
+        # 1. Удаляем #dai / dai
+        res = re.sub(r'(?i)#?dai\b', '', text)
+        # 2. Удаляем теги категорий (#cat1-7, cat1-7, #aboutus, aboutus, #about_us)
+        res = re.sub(r'(?i)#?cat[1-7]\b', '', res)
+        res = re.sub(r'(?i)#?about_?us\b', '', res)
+        # 3. Удаляем ключевые слова срочности (breaking, молния и т.д.) с опциональным #
+        if urgent_keywords:
+            for kw in urgent_keywords:
+                if kw and kw.strip():
+                    res = re.sub(rf'(?i)#?{re.escape(kw.strip())}\b', '', res)
+        else:
+            for kw in ['breaking', 'молния', 'urgent', 'срочно']:
+                res = re.sub(rf'(?i)#?{re.escape(kw)}\b', '', res)
+
+        # Очищаем лишние пробелы в строках и удаляем пустые строки в конце
+        lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in res.split('\n')]
+        while lines and not lines[-1]:
+            lines.pop()
+        return '\n'.join(lines).strip()
+
     def _process_direct_post(self, raw_text: str):
         """
         Обработка прямого поста с флагом #dai (в обход DeepSeek и парсера)
@@ -289,12 +315,11 @@ class TelegramHandler:
             else:
                 topic_id = None
 
-            # Удаляем флаг #dai (без учёта регистра)
-            clean_text = re.sub(r'(?i)#dai\b', '', raw_text)
-            clean_text = clean_text.strip()
+            # Очищаем служебные теги (#dai, cat1-cat7, #aboutus, breaking, молния и т.д.)
+            clean_text = self.clean_service_tags(raw_text, self.urgent_keywords)
 
             if not clean_text:
-                logger.warning("Прямой пост: пустой текст после удаления флага #dai")
+                logger.warning("Прямой пост: пустой текст после удаления служебных тегов")
                 return
 
             # Заголовок - первая непустая строка
@@ -655,31 +680,36 @@ class TelegramHandler:
     def _cmd_help(self, message: types.Message):
         """Команда /help"""
         available_styles = ', '.join(Config.AVAILABLE_STYLES)
-        help_text = f"""
-Доступные команды:
+        help_text = f"""📖 Справка по командам бота:
 
-📋 Основные:
-/start - Информация о боте
-/status - Статус очереди новостей
-/queue - Показать новости в очереди
-/help - Это сообщение
+📋 Основные команды:
+/start — Информация о боте и расписании
+/status — Статистика очереди и публикаций
+/queue — Список новостей в очереди ожидания
+/help — Эта справка
 
-⚙️ Настройки (админ):
-/settings - Интерактивное меню настроек (кнопки)
-/set_style [style] - Изменить стиль написания
-/get_style - Показать текущий стиль
-/config - Показать все настройки
-/set_config [key] [value] - Изменить настройку
-/reload_config - Перезагрузить настройки
+⚙️ Настройки (для админа):
+/settings — Интерактивное меню настроек (кнопки)
+/set_style [style] — Изменить стиль (стили: {available_styles})
+/get_style — Показать текущий стиль
+/config — Показать все текущие параметры
+/set_config [key] [value] — Изменить параметр на лету
+/reload_config — Перечитать настройки из БД
 
-📰 Публикации (админ):
-/view [id] - Просмотр публикации по ID
-/rewrite [id] - Переписать статью с новым стилем/длиной
-/publishnow [id] - Опубликовать немедленно
-/clear_queue - Очистить очередь
+📰 Публикации и Модерация (для админа):
+/view [id] — Предпросмотр новости из очереди в ЛС
+/rewrite [id] — Переписать новость через ИИ (новый стиль/длина)
+/publishnow [id] — Опубликовать новость немедленно
+/clear_queue — Полностью очистить очередь
 
-Доступные стили: {available_styles}
-Доступные длины: short (1000), medium (2000), long (3000)
+📝 Прямые посты и дайджесты (#dai):
+Отправьте в канал-источник текст с тегом #dai:
+• Бот опубликует пост напрямую (без обработки ИИ).
+• Ссылки [текст](url) и **жирный** текст сохраняются.
+• Google-редиректы автоматически очищаются.
+• Служебные теги (#dai, cat1–cat7, breaking) автоматически вырезаются из публикации.
+• Категории: cat1 (#news), cat2 (#visa), cat3 (#life), cat4 (#spanish), cat5 (#tourism), cat6 (#family), cat7 (#aboutus).
+• Срочность: слово breaking или молния публикует пост немедленно.
 """
         # Создаем inline клавиатуру
         keyboard = types.InlineKeyboardMarkup(row_width=2)

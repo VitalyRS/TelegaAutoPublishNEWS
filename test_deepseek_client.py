@@ -155,5 +155,23 @@ class TestDeepSeekClient(unittest.TestCase):
         self.assertEqual(formatted.count('<b>'), formatted.count('</b>'))
 
 
+    def test_clean_service_tags(self):
+        """Проверка, что служебные теги (#dai, cat1..cat7, breaking и т.д.) удаляются из текста"""
+        import sys
+        for mod in ['telebot', 'telebot.types', 'newspaper', 'apscheduler', 'apscheduler.schedulers', 'apscheduler.schedulers.background']:
+            if mod not in sys.modules:
+                sys.modules[mod] = MagicMock()
+
+        from telegram_handler import TelegramHandler
+
+        raw = "#Испания #Курьезы #Юмор #breaking cat3 #dai"
+        cleaned = TelegramHandler.clean_service_tags(raw, ['breaking'])
+        self.assertEqual(cleaned, "#Испания #Курьезы #Юмор")
+
+        raw2 = "Текст новости\n#Испания #Лайфхаки cat2 #breaking #dai"
+        cleaned2 = TelegramHandler.clean_service_tags(raw2, ['breaking'])
+        self.assertEqual(cleaned2, "Текст новости\n#Испания #Лайфхаки")
+
+
 if __name__ == '__main__':
     unittest.main()
